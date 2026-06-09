@@ -365,6 +365,7 @@ export function create(
         mcp: def.mcp,
         middlewares,
         outputPolicy: def.outputPolicy,
+        renderer: def.renderer,
         rootCommand: rootDef,
         rootFetch,
         sync: def.sync,
@@ -513,6 +514,13 @@ export declare namespace create {
      * @default 'all'
      */
     outputPolicy?: OutputPolicy | undefined
+    /**
+     * Custom renderer for human/TTY output mode.
+     * Called with the raw output data when no explicit `--format` flag was passed.
+     * Return a string to display it, or `null` to fall back to the default TOON formatter.
+     * Has no effect in agent/piped mode or when `--format` is set explicitly.
+     */
+    renderer?: ((data: unknown) => string | null) | undefined
     /** Alternative usage patterns shown in help output. */
     usage?: Usage<args, options>[] | undefined
     /** Zod schema for middleware variables. Keys define variable names, schemas define types and defaults. */
@@ -1394,11 +1402,19 @@ async function serveImpl(
       return writeln(String(estimateTokenCount(formatted)))
     }
     const cta = output.meta.cta
+    // Human/TTY mode: write readable output directly, skip the structured envelope.
     if (human && !fullOutput) {
       if (output.ok && output.data != null && renderOutput) {
-        const t = truncate(Formatter.format(output.data, format))
+        // Give the CLI's custom renderer first crack; fall back to the default formatter.
+        const custom =
+          !formatExplicit && options.renderer != null
+            ? options.renderer(output.data)
+            : null
+        const rendered = custom ?? Formatter.format(output.data, format)
+        const t = truncate(rendered)
         writeln(t.text)
       } else if (!output.ok) writeln(formatHumanError(output.error))
+      // Always show the call-to-action if present, regardless of output policy.
       if (cta) writeln(formatHumanCta(cta))
       return
     }
@@ -2402,6 +2418,8 @@ declare namespace serveImpl {
     middlewares?: MiddlewareHandler[] | undefined
     /** CLI-level default output policy. */
     outputPolicy?: OutputPolicy | undefined
+    /** Custom renderer for human/TTY output mode. Return null to fall back to default formatting. */
+    renderer?: ((data: unknown) => string | null) | undefined
     mcp?:
       | {
           agents?: string[] | undefined
