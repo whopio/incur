@@ -1,0 +1,253 @@
+import fsSync from 'node:fs';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { parse as yamlParse } from 'yaml';
+import { formatExamples } from './Cli.js';
+import * as Agents from './internal/agents.js';
+import * as Skill from './Skill.js';
+/** Generates skill files from a command map and installs them natively. */
+export async function sync(name, commands, options = {}) {
+    const { depth = 1, description, global = true } = options;
+    const cwd = options.cwd ?? (global ? resolvePackageRoot() : process.cwd());
+    const groups = new Map();
+    if (description)
+        groups.set(name, description);
+    const entries = collectEntries(commands, [], groups, options.rootCommand);
+    const files = Skill.split(name, entries, depth, groups);
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `incur-skills-${name}-`));
+    try {
+        const skills = [];
+        for (const file of files) {
+            const filePath = file.dir
+                ? path.join(tmpDir, file.dir, 'SKILL.md')
+                : path.join(tmpDir, 'SKILL.md');
+            await fs.mkdir(path.dirname(filePath), { recursive: true });
+            await fs.writeFile(filePath, `${file.content}\n`);
+            const meta = parseFrontmatter(file.content);
+            skills.push({ name: meta.name ?? (file.dir || name), description: meta.description });
+        }
+        // Include additional SKILL.md files matched by glob patterns
+        if (options.include) {
+            for (const pattern of options.include) {
+                const globPattern = pattern === '_root' ? 'SKILL.md' : path.join(pattern, 'SKILL.md');
+                for await (const match of fs.glob(globPattern, { cwd })) {
+                    try {
+                        const content = await fs.readFile(path.resolve(cwd, match), 'utf8');
+                        const meta = parseFrontmatter(content);
+                        const skillName = pattern === '_root' ? (meta.name ?? name) : path.basename(path.dirname(match));
+                        const dest = path.join(tmpDir, skillName, 'SKILL.md');
+                        await fs.mkdir(path.dirname(dest), { recursive: true });
+                        await fs.writeFile(dest, content);
+                        if (!skills.some((s) => s.name === skillName))
+                            skills.push({ name: skillName, description: meta.description, external: true });
+                    }
+                    catch { }
+                }
+            }
+        }
+        const { paths, agents } = Agents.install(tmpDir, { global, cwd });
+        // Remove stale skills from previous installs
+        const currentNames = new Set(paths.map((p) => path.basename(p)));
+        const prev = readMeta(name);
+        if (prev?.skills) {
+            for (const old of prev.skills) {
+                if (currentNames.has(old))
+                    continue;
+                Agents.remove(old, { global, cwd });
+            }
+        }
+        // Write skills hash + names for staleness detection
+        const hashEntries = collectEntries(commands, [], undefined, options.rootCommand);
+        writeMeta(name, Skill.hash(hashEntries), [...currentNames], [...paths, ...agents.map((agent) => agent.path)]);
+        return { skills: skills.sort((a, b) => a.name.localeCompare(b.name)), paths, agents };
+    }
+    finally {
+        await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+}
+/** Lists skills derived from a CLI's command map with install status. */
+export async function list(name, commands, options = {}) {
+    const { depth = 1, description } = options;
+    const cwd = options.cwd ?? process.cwd();
+    const groups = new Map();
+    if (description)
+        groups.set(name, description);
+    const entries = collectEntries(commands, [], groups, options.rootCommand);
+    const files = Skill.split(name, entries, depth, groups);
+    const skills = [];
+    const installed = readInstalledSkills(name, { cwd });
+    for (const file of files) {
+        const meta = parseFrontmatter(file.content);
+        const skillName = meta.name ?? (file.dir || name);
+        skills.push({
+            name: skillName,
+            description: meta.description,
+            installed: installed.has(skillName),
+        });
+    }
+    // Include additional SKILL.md files matched by glob patterns
+    if (options.include) {
+        for (const pattern of options.include) {
+            const globPattern = pattern === '_root' ? 'SKILL.md' : path.join(pattern, 'SKILL.md');
+            for await (const match of fs.glob(globPattern, { cwd })) {
+                try {
+                    const content = await fs.readFile(path.resolve(cwd, match), 'utf8');
+                    const meta = parseFrontmatter(content);
+                    const skillName = pattern === '_root' ? (meta.name ?? name) : path.basename(path.dirname(match));
+                    if (!skills.some((s) => s.name === skillName)) {
+                        skills.push({
+                            name: skillName,
+                            description: meta.description,
+                            installed: installed.has(skillName),
+                        });
+                    }
+                }
+                catch { }
+            }
+        }
+    }
+    return skills.sort((a, b) => a.name.localeCompare(b.name));
+}
+/** Returns whether any previously synced skills are still installed on disk. */
+export function hasInstalledSkills(name, options = {}) {
+    return readInstalledSkills(name, options).size > 0;
+}
+/** Recursively collects leaf commands as `Skill.CommandInfo`. */
+function collectEntries(commands, prefix, groups = new Map(), rootCommand) {
+    const result = [];
+    if (rootCommand) {
+        const cmd = {};
+        if (rootCommand.description)
+            cmd.description = rootCommand.description;
+        if (rootCommand.args)
+            cmd.args = rootCommand.args;
+        if (rootCommand.env)
+            cmd.env = rootCommand.env;
+        if (rootCommand.hint)
+            cmd.hint = rootCommand.hint;
+        if (rootCommand.options)
+            cmd.options = rootCommand.options;
+        if (rootCommand.output)
+            cmd.output = rootCommand.output;
+        const examples = formatExamples(rootCommand.examples);
+        if (examples)
+            cmd.examples = examples;
+        result.push(cmd);
+    }
+    for (const [name, entry] of commands) {
+        const entryPath = [...prefix, name];
+        if ('_group' in entry && entry._group) {
+            if (entry.description)
+                groups.set(entryPath.join(' '), entry.description);
+            result.push(...collectEntries(entry.commands, entryPath, groups));
+        }
+        else {
+            const cmd = { name: entryPath.join(' ') };
+            if (entry.description)
+                cmd.description = entry.description;
+            if (entry.args)
+                cmd.args = entry.args;
+            if (entry.env)
+                cmd.env = entry.env;
+            if (entry.hint)
+                cmd.hint = entry.hint;
+            if (entry.options)
+                cmd.options = entry.options;
+            if (entry.output)
+                cmd.output = entry.output;
+            const examples = formatExamples(entry.examples);
+            if (examples) {
+                const cmdName = entryPath.join(' ');
+                cmd.examples = examples.map((e) => ({
+                    ...e,
+                    command: e.command ? `${cmdName} ${e.command}` : cmdName,
+                }));
+            }
+            result.push(cmd);
+        }
+    }
+    return result.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
+}
+function parseFrontmatter(content) {
+    const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    if (!match)
+        return {};
+    const meta = yamlParse(match[1]);
+    if (!meta || typeof meta !== 'object')
+        return {};
+    return meta;
+}
+/** Resolves the package root from the executing bin script (`process.argv[1]`). Walks up from the bin's directory looking for `package.json`. Falls back to `process.cwd()`. */
+function resolvePackageRoot() {
+    const bin = process.argv[1];
+    if (!bin)
+        return process.cwd();
+    let dir = path.dirname((() => {
+        try {
+            // resolve symlinks for normal bin scripts
+            return fsSync.realpathSync(bin);
+        }
+        catch {
+            // Bun compiled binaries use a virtual `/$bunfs/` path for argv[1]
+            return process.execPath;
+        }
+    })());
+    const root = path.parse(dir).root;
+    while (dir !== root) {
+        try {
+            fsSync.accessSync(path.join(dir, 'package.json'));
+            return dir;
+        }
+        catch { }
+        dir = path.dirname(dir);
+    }
+    return process.cwd();
+}
+/** Returns the hash file path for a CLI. */
+function hashPath(name) {
+    const dir = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
+    return path.join(dir, 'incur', `${name}.json`);
+}
+/** @internal Writes the skills metadata for staleness detection and cleanup. */
+function writeMeta(name, hash, skills, paths) {
+    const file = hashPath(name);
+    const dir = path.dirname(file);
+    if (!fsSync.existsSync(dir))
+        fsSync.mkdirSync(dir, { recursive: true });
+    fsSync.writeFileSync(file, JSON.stringify({ hash, skills, paths, at: new Date().toISOString() }) + '\n');
+}
+/** @internal Reads the stored metadata for a CLI. */
+function readMeta(name) {
+    try {
+        return JSON.parse(fsSync.readFileSync(hashPath(name), 'utf-8'));
+    }
+    catch {
+        return undefined;
+    }
+}
+/** Reads the names of previously synced skills that are still installed on disk. */
+function readInstalledSkills(name, options = {}) {
+    const meta = readMeta(name);
+    if (!meta?.skills?.length)
+        return new Set();
+    if (meta.paths?.length) {
+        const installed = meta.paths
+            .filter((skillPath) => isInstalledSkillPath(skillPath))
+            .map((skillPath) => path.basename(skillPath));
+        return new Set(installed);
+    }
+    const cwd = options.cwd ?? process.cwd();
+    const bases = [path.join(os.homedir(), '.agents', 'skills'), path.join(cwd, '.agents', 'skills')];
+    const installed = meta.skills.filter((skill) => bases.some((base) => isInstalledSkillPath(path.join(base, skill))));
+    return new Set(installed);
+}
+/** Returns whether a skill directory currently contains a skill file. */
+function isInstalledSkillPath(skillPath) {
+    return fsSync.existsSync(path.join(skillPath, 'SKILL.md'));
+}
+/** Reads the stored skills hash for a CLI. Returns `undefined` if no hash exists. */
+export function readHash(name) {
+    return readMeta(name)?.hash;
+}
+//# sourceMappingURL=SyncSkills.js.map
