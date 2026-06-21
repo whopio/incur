@@ -1,8 +1,7 @@
 import { encode } from '@toon-format/toon'
 
-import * as Yaml from './internal/yaml.js'
-
 import * as Json from './internal/json.js'
+import * as Yaml from './internal/yaml.js'
 
 /** Supported output formats. */
 export type Format = 'toon' | 'json' | 'yaml' | 'md' | 'jsonl'

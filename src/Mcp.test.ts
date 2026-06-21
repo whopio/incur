@@ -165,6 +165,18 @@ describe('Mcp', () => {
     expect(res.result.content).toEqual([{ type: 'text', text: '{"result":"HELLO"}' }])
   })
 
+  test('tools/call validation error includes fieldErrors', async () => {
+    const tool = Mcp.collectTools(createTestCommands(), []).find((tool) => tool.name === 'echo')!
+    const result = await Mcp.callTool(tool, { message: 123 })
+    expect(result.isError).toBe(true)
+    const [content] = result.content
+    expect(content).toBeDefined()
+    expect(JSON.parse(content!.text)).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      fieldErrors: [{ code: 'invalid_type', missing: false, path: 'message' }],
+    })
+  })
+
   test('tools/call with nested group command', async () => {
     const [, res] = await mcpSession(createTestCommands(), [
       { id: 1, method: 'initialize', params: initParams },

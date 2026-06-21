@@ -147,7 +147,14 @@ export async function callTool(
 
   if (!result.ok)
     return {
-      content: [{ type: 'text', text: result.error.message ?? 'Command failed' }],
+      content: [
+        {
+          type: 'text',
+          text: result.error.fieldErrors
+            ? JSON.stringify(result.error)
+            : (result.error.message ?? 'Command failed'),
+        },
+      ],
       isError: true,
     }
 
