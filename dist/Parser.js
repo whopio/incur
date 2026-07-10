@@ -280,7 +280,84 @@ function coerce(value, name, schema) {
     if (typeName === 'ZodBoolean' && typeof value === 'string') {
         return value === 'true';
     }
+    if (isStructuredType(typeName) && typeof value === 'string') {
+        return coerceJsonObject(value, name) ?? value;
+    }
+    if (typeName === 'ZodUnion' && typeof value === 'string') {
+        return coerceUnion(value, inner);
+    }
+    if (typeName === 'ZodArray' && Array.isArray(value)) {
+        return coerceArray(value, name, inner);
+    }
     return value;
+}
+function isStructuredType(typeName) {
+    return typeName === 'ZodObject' || typeName === 'ZodRecord';
+}
+/**
+ * Coerces accumulated array flag values. A single value that is itself a JSON
+ * array replaces the accumulation (`--items '[{"a":1},{"a":2}]'`); otherwise,
+ * when elements are objects, each value is parsed from JSON
+ * (`--items '{"a":1}' --items '{"a":2}'`). Scalar-element arrays keep their
+ * literal values so existing repeated-flag usage is unchanged.
+ */
+function coerceArray(values, name, arraySchema) {
+    const element = arraySchema.def?.element;
+    const structured = element ? isStructuredType(unwrap(element).constructor.name) : false;
+    if (values.length === 1 && typeof values[0] === 'string' && values[0].trim().startsWith('[')) {
+        try {
+            const parsed = JSON.parse(values[0]);
+            if (Array.isArray(parsed))
+                return parsed;
+        }
+        catch (error) {
+            // A literal string can never satisfy an object element, so surface the
+            // JSON typo; for scalar elements the value may be a legitimate literal.
+            if (structured)
+                throw invalidJsonError(name, error);
+        }
+    }
+    if (!structured)
+        return values;
+    return values.map((item) => typeof item === 'string' ? (coerceJsonObject(item, name) ?? item) : item);
+}
+/** Parses a JSON string against a union that accepts objects, falling back to the literal string. */
+function coerceUnion(value, union) {
+    const members = union.def?.options;
+    if (!members?.some((member) => isStructuredType(unwrap(member).constructor.name)))
+        return value;
+    const trimmed = value.trim();
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('['))
+        return value;
+    try {
+        return JSON.parse(value);
+    }
+    catch {
+        // The union may accept plain strings, so a failed parse stays literal.
+        return value;
+    }
+}
+/**
+ * Parses a JSON object for an option whose schema expects one. Returns
+ * `undefined` when the string doesn't start with `{` (so plain strings still
+ * surface the schema's own type error); throws on malformed JSON so typos
+ * aren't silently passed through as strings.
+ */
+function coerceJsonObject(value, name) {
+    if (!value.trim().startsWith('{'))
+        return undefined;
+    try {
+        return JSON.parse(value);
+    }
+    catch (error) {
+        throw invalidJsonError(name, error);
+    }
+}
+function invalidJsonError(name, error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return new ParseError({
+        message: `Invalid JSON for --${name}: ${detail}`,
+    });
 }
 /** Parses known global options from argv, passing unknown flags and positionals through to `rest`. */
 export function parseGlobals(argv, schema, alias, options = {}) {
