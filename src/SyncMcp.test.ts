@@ -160,6 +160,24 @@ test('register uses bare name for global binary installs', async () => {
   })
 })
 
+test('register uses the real binary path for bun compiled standalone binaries', async () => {
+  process.argv[1] = '/$bunfs/root/index.js'
+
+  const { execFile } = await import('node:child_process')
+  vi.mocked(execFile).mockClear()
+
+  const result = await register('my-cli', { agents: ['amp'] })
+
+  expect(result.command).toBe(`"${process.execPath}" --mcp`)
+
+  const configPath = join(fakeHome!, '.config', 'amp', 'settings.json')
+  const config = JSON.parse(readFileSync(configPath, 'utf-8'))
+  expect(config['amp.mcpServers']['my-cli']).toEqual({
+    command: process.execPath,
+    args: ['--mcp'],
+  })
+})
+
 test('register uses runner for source entrypoints outside node_modules', async () => {
   process.argv[1] = join(tmp, 'dist', 'bin.js')
 

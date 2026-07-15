@@ -64,9 +64,18 @@ function registerAmp(name, command) {
 }
 /** @internal Builds the default MCP command for the current launch mode. */
 function defaultCommand(name, runner) {
+    if (isStandaloneBinary())
+        return `"${process.execPath}" --mcp`;
     return shouldUseBareCommand(name)
         ? `${name} --mcp`
         : `${runner} ${detectPackageSpecifier(name)} --mcp`;
+}
+/** @internal Bun compiled binaries expose a virtual path as argv[1] (`/$bunfs/` on unix, `B:\~BUN\` on Windows); the real on-disk binary is process.execPath. */
+function isStandaloneBinary() {
+    const bin = process.argv[1]?.replace(/\\/g, '/');
+    if (!bin)
+        return false;
+    return bin.startsWith('/$bunfs/') || bin.includes('/~BUN/');
 }
 /** @internal Returns node_modules path details for the current entrypoint. */
 function nodeModulesInfo() {
