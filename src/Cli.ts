@@ -28,6 +28,7 @@ import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
 import * as Yaml from './internal/yaml.js'
 import * as Mcp from './Mcp.js'
+import * as McpSource from './McpSource.js'
 import type { Context as MiddlewareContext, Handler as MiddlewareHandler } from './middleware.js'
 import * as Openapi from './Openapi.js'
 export type { MiddlewareHandler }
@@ -96,6 +97,17 @@ export type Cli<
         fetch: FetchSource
         openapi?: Openapi.OpenAPISource | undefined
         openapiConfig?: Openapi.Config | undefined
+        outputPolicy?: OutputPolicy | undefined
+        /** Set to `false` to hide this command group from MCP clients. */
+        mcp?: false | undefined
+      },
+    ): Cli<commands, vars, env, globals>
+    /** Mounts a remote MCP server as a command group. */
+    <const name extends string>(
+      name: name,
+      definition: {
+        description?: string | undefined
+        mcp: McpSource.Source
         outputPolicy?: OutputPolicy | undefined
       },
     ): Cli<commands, vars, env, globals>
@@ -247,6 +259,7 @@ export function create(
   const pending: Promise<void>[] = []
   const mcpHandler = createMcpHttpHandler(name, def.version ?? '0.0.0', {
     stateless: def.mcp?.stateless,
+    tools: def.mcp?.tools,
   })
 
   if (def.openapi && rootFetch) {
@@ -269,6 +282,23 @@ export function create(
 
     command(nameOrCli: any, def?: any): any {
       if (typeof nameOrCli === 'string') {
+        if (isMcpSourceDefinition(def)) {
+          pending.push(
+            (async () => {
+              const resolved = await McpSource.resolve(def.mcp)
+              const generated = McpSource.generateCommands(resolved)
+              const entry = {
+                _group: true,
+                description: def.description,
+                commands: generated as Map<string, CommandEntry>,
+                ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
+              } as InternalGroup
+              assertNoGlobalOptionConflicts(nameOrCli, entry, toGlobals.get(cli))
+              commands.set(nameOrCli, entry)
+            })(),
+          )
+          return cli
+        }
         if (def && 'fetch' in def && isFetchSource(def.fetch)) {
           const fetch = resolveFetch(def.fetch)
           // OpenAPI + fetch → generate typed command group (async, resolved before serve)
@@ -287,6 +317,7 @@ export function create(
                   description: def.description,
                   commands: generated as Map<string, CommandEntry>,
                   ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
+                  ...(def.mcp === false ? { mcp: false } : undefined),
                 } as InternalGroup
                 assertNoGlobalOptionConflicts(nameOrCli, entry, toGlobals.get(cli))
                 commands.set(nameOrCli, entry)
@@ -571,6 +602,8 @@ export declare namespace create {
           instructions?: string | undefined
           /** Disable HTTP MCP session management. Defaults to `true`. */
           stateless?: boolean | undefined
+          /** Controls how command tools are exposed to MCP clients. */
+          tools?: Mcp.ToolFilter | undefined
         }
       | undefined
     /** Options for the built-in `skills add` command. */
@@ -613,7 +646,8 @@ async function serveImpl(
 ) {
   const stdout = options.stdout ?? ((s: string) => process.stdout.write(s))
   const exit = options.exit ?? ((code: number) => process.exit(code))
-  const human = process.stdout.isTTY === true
+  const tty = process.stdout.isTTY === true
+  let human = tty
   const configEnabled = options.config !== undefined
   const configFlag = options.config?.flag
   const displayName = resolveDisplayName(name, options.aliases)
@@ -665,6 +699,7 @@ async function serveImpl(
     configDisabled,
     rest,
   } = builtinFlags
+  human = tty && !formatExplicit
 
   let globals: Record<string, unknown> = {}
   let filtered = rest
@@ -700,6 +735,7 @@ async function serveImpl(
       vars: options.vars,
       version: options.version,
       ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
+      ...(options.mcp?.tools ? { tools: options.mcp.tools } : undefined),
     })
     return
   }
@@ -1822,35 +1858,17 @@ function createMcpHttpHandler(
         await import('@modelcontextprotocol/server')
 
       const server = new McpServer({ name, version })
-
-      for (const tool of Mcp.collectTools(commands, [])) {
-        const mergedShape: Record<string, any> = {
-          ...tool.command.args?.shape,
-          ...tool.command.options?.shape,
-        }
-        const hasInput = Object.keys(mergedShape).length > 0
-
-        server.registerTool(
-          tool.name,
-          {
-            ...(tool.description ? { description: tool.description } : undefined),
-            ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
-            ...(tool.outputSchema
-              ? { outputSchema: fromJsonSchema(tool.outputSchema) }
-              : undefined),
-          },
-          async (...callArgs: any[]) => {
-            const params = hasInput ? (callArgs[0] as Record<string, unknown>) : {}
-            return Mcp.callTool(tool, params, {
-              name,
-              version,
-              middlewares: mcpOptions?.middlewares,
-              env: mcpOptions?.env,
-              vars: mcpOptions?.vars,
-            })
-          },
-        )
-      }
+      Mcp.registerTools(server, commands, {
+        env: mcpOptions?.env,
+        fromJsonSchema,
+        middlewares: mcpOptions?.middlewares,
+        name,
+        request: (extra) => extra?.http?.req,
+        sendNotification: (notification) => server.server.notification(notification),
+        tools: options.tools,
+        vars: mcpOptions?.vars,
+        version,
+      })
 
       const transportOptions = stateless
         ? { enableJsonResponse: true }
@@ -1869,6 +1887,8 @@ declare namespace createMcpHttpHandler {
   type Options = {
     /** Disable HTTP MCP session management. Defaults to `true`. */
     stateless?: boolean | undefined
+    /** Filters which command tools are exposed to MCP clients. */
+    tools?: Mcp.ToolFilter | undefined
   }
 }
 
@@ -1998,7 +2018,7 @@ async function fetchImpl(
   if (segments.length === 0) {
     // Root path
     if (options.rootCommand)
-      return executeCommand(name, options.rootCommand, [], inputOptions, start, options)
+      return executeCommand(name, options.rootCommand, [], inputOptions, req, start, options)
     return jsonResponse(
       {
         ok: false,
@@ -2045,7 +2065,7 @@ async function fetchImpl(
 
   const { command, path, rest } = resolved
   const groupMiddlewares = 'middlewares' in resolved ? resolved.middlewares : []
-  return executeCommand(path, command, rest, inputOptions, start, {
+  return executeCommand(path, command, rest, inputOptions, req, start, {
     ...options,
     groupMiddlewares,
   })
@@ -2057,6 +2077,7 @@ async function executeCommand(
   command: CommandDefinition<any, any, any>,
   rest: string[],
   inputOptions: Record<string, unknown>,
+  request: Request,
   start: number,
   options: fetchImpl.Options,
 ): Promise<Response> {
@@ -2111,6 +2132,7 @@ async function executeCommand(
     name: options.name ?? path,
     parseMode: 'split',
     path,
+    request,
     vars: options.vars,
     version: options.version,
   })
@@ -2426,6 +2448,7 @@ declare namespace serveImpl {
           command?: string | undefined
           instructions?: string | undefined
           stateless?: boolean | undefined
+          tools?: Mcp.ToolFilter | undefined
         }
       | undefined
     /** Banner config, called before root help. */
@@ -2769,8 +2792,13 @@ async function runMcpDoctor(
     vars: options.vars,
     version: options.version,
     ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
+    tools: { ...options.mcp?.tools, discovery: 'direct' },
   }).catch((error) => {
     serveError = error
+  })
+  let serveFinished = false
+  void done.finally(() => {
+    serveFinished = true
   })
 
   input.write(
@@ -2786,7 +2814,7 @@ async function runMcpDoctor(
     })}\n`,
   )
   input.write(`${Json.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })}\n`)
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  await waitForMcpDoctorResponses(chunks, () => serveFinished)
   input.end()
   await done
 
@@ -2846,6 +2874,14 @@ async function runMcpDoctor(
     tools,
     warnings,
     errors,
+  }
+}
+
+async function waitForMcpDoctorResponses(chunks: string[], finished: () => boolean) {
+  const started = Date.now()
+  while (!finished() && (chunks.join('').match(/\n/g)?.length ?? 0) < 2) {
+    if (Date.now() - started >= 1_000) return
+    await new Promise((resolve) => setTimeout(resolve, 5))
   }
 }
 
@@ -2915,6 +2951,7 @@ export type FetchSource = Fetch.Source
 type InternalGroup = {
   _group: true
   description?: string | undefined
+  mcp?: false | undefined
   middlewares?: MiddlewareHandler[] | undefined
   outputPolicy?: OutputPolicy | undefined
   commands: Map<string, CommandEntry>
@@ -2935,6 +2972,17 @@ function isFetchSource(value: unknown): value is FetchSource {
 
   const source = value as { fetch?: unknown; url?: unknown }
   return typeof source.fetch === 'function' && source.url instanceof URL
+}
+
+function isMcpSourceDefinition(value: unknown): value is {
+  description?: string | undefined
+  mcp: McpSource.Source
+  outputPolicy?: OutputPolicy | undefined
+} {
+  if (typeof value !== 'object' || value === null || !('mcp' in value)) return false
+  const source = (value as { mcp?: unknown }).mcp
+  if (typeof source === 'string' || source instanceof URL) return true
+  return typeof source === 'object' && source !== null && 'url' in source
 }
 
 function resolveFetch(source: FetchSource): FetchHandler {
@@ -3473,7 +3521,10 @@ type SkillCommandSource = Pick<
 >
 
 function isDestructive(command: SkillCommandSource): boolean {
-  return command.destructive === true || command.mcp?.annotations?.destructiveHint === true
+  return (
+    command.destructive === true ||
+    (command.mcp !== false && command.mcp?.annotations?.destructiveHint === true)
+  )
 }
 
 function appendDestructiveHint(hint: string | undefined): string {
@@ -3648,6 +3699,8 @@ type CommandDefinition<
   hint?: string | undefined
   /** MCP-specific metadata exposed when this command is served as a tool. */
   mcp?:
+    /** Set to `false` to hide this command from MCP clients. */
+    | false
     | {
         /** Override the command name exposed to MCP clients. */
         name?: string | undefined
@@ -3700,6 +3753,8 @@ type CommandDefinition<
     name: string
     /** Return a success result with optional metadata (e.g. CTAs). */
     ok: (data: InferReturn<output>, meta?: { cta?: CtaBlock | undefined }) => never
+    /** The inbound HTTP request when invoked via HTTP or HTTP MCP; undefined for CLI/stdio invocations. */
+    request?: Request | undefined
     options: InferOutput<options>
     /** Variables set by middleware. */
     var: InferVars<vars>

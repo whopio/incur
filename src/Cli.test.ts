@@ -2088,6 +2088,37 @@ describe('leaf cli', () => {
     expect(JSON.parse(output)).toEqual({ pong: true })
   })
 
+  test('--format json remains parseable in TTY output with CTAs', async () => {
+    const previous = process.stdout.isTTY
+    ;(process.stdout as any).isTTY = true
+    try {
+      const cli = Cli.create('ping', {
+        run(c) {
+          return c.ok(
+            { pong: true },
+            {
+              cta: {
+                description: 'Suggested command:',
+                commands: ['next'],
+              },
+            },
+          )
+        },
+      })
+      const { output } = await serve(cli, ['--format', 'json'])
+
+      expect(JSON.parse(output)).toEqual({
+        pong: true,
+        cta: {
+          description: 'Suggested command:',
+          commands: [{ command: 'ping next' }],
+        },
+      })
+    } finally {
+      ;(process.stdout as any).isTTY = previous
+    }
+  })
+
   test('errors wrap in error envelope', async () => {
     const cli = Cli.create('fail', {
       run() {
@@ -2934,6 +2965,53 @@ describe('built-in commands', () => {
       warnings: [],
       errors: [],
     })
+  })
+
+  test('mcp doctor waits for delayed tool listings', async () => {
+    const spy = vi
+      .spyOn(Mcp, 'serve')
+      .mockImplementation(async (_name, _version, _commands, options) => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        options!.output?.write(
+          `${JSON.stringify({ jsonrpc: '2.0', id: 1, result: { serverInfo: {} } })}\n`,
+        )
+        options!.output?.write(
+          `${JSON.stringify({ jsonrpc: '2.0', id: 2, result: { tools: [{ name: 'ping' }] } })}\n`,
+        )
+      })
+    try {
+      const cli = Cli.create('test')
+      cli.command('ping', { run: () => ({ pong: true }) })
+
+      const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+
+      expect(exitCode).toBeUndefined()
+      expect(JSON.parse(output)).toMatchObject({ ok: true, toolCount: 1 })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp doctor applies root MCP tool filters', async () => {
+    const cli = Cli.create('test', {
+      version: '1.0.0',
+      mcp: { tools: { exclude: ['secret_*'] } },
+    })
+    cli.command('docs_list', { description: 'Docs', run: () => ({ ok: true }) })
+    cli.command('secret_list', { description: 'Secret', run: () => ({ ok: true }) })
+
+    const { output, exitCode } = await serve(cli, ['mcp', 'doctor', '--json'])
+    const result = JSON.parse(output)
+
+    expect(exitCode).toBeUndefined()
+    expect(result.tools).toMatchInlineSnapshot(`
+      [
+        {
+          "description": "Docs",
+          "name": "docs_list",
+        },
+      ]
+    `)
   })
 
   test('mcp doctor forwards MCP instructions to the smoke test server', async () => {
@@ -4730,6 +4808,28 @@ describe('Command.execute', () => {
     expect(result).toMatchObject({ ok: false, error: { code: 'UNKNOWN' } })
     expect(result).not.toHaveProperty('error.fieldErrors')
   })
+
+  test('CLI invocation leaves request undefined', async () => {
+    const result = await Command.execute(
+      {
+        run(c: any) {
+          return { hasRequest: c.request !== undefined }
+        },
+      },
+      {
+        agent: true,
+        argv: [],
+        format: 'json',
+        formatExplicit: false,
+        inputOptions: {},
+        name: 'test',
+        path: 'users',
+        version: undefined,
+      },
+    )
+
+    expect(result).toMatchObject({ ok: true, data: { hasRequest: false } })
+  })
 })
 
 async function fetchJson(cli: Cli.Cli<any, any, any, any>, req: Request) {
@@ -4863,6 +4963,22 @@ describe('fetch', () => {
           "ok": true,
         },
         "status": 200,
+      }
+    `)
+  })
+
+  test('HTTP route exposes inbound request to command context', async () => {
+    const cli = Cli.create('test')
+    cli.command('auth', {
+      run: (c) => ({ authorization: c.request?.headers.get('authorization') }),
+    })
+    const req = new Request('http://localhost/auth', {
+      headers: { authorization: 'Bearer t' },
+    })
+    const { body } = await fetchJson(cli, req)
+    expect(body.data).toMatchInlineSnapshot(`
+      {
+        "authorization": "Bearer t",
       }
     `)
   })
@@ -5556,7 +5672,10 @@ describe('fetch', () => {
 
   describe('mcp over http', () => {
     function mcpCli() {
-      const cli = Cli.create('test', { version: '1.0.0' })
+      const cli = Cli.create('test', {
+        version: '1.0.0',
+        mcp: { tools: { discovery: 'direct' } },
+      })
       cli.command('greet', {
         description: 'Greet someone',
         args: z.object({ name: z.string() }),
@@ -5569,10 +5688,16 @@ describe('fetch', () => {
       return cli
     }
 
-    async function mcpRequest(cli: Cli.Cli<any, any, any>, body: unknown, sessionId?: string) {
+    async function mcpRequest(
+      cli: Cli.Cli<any, any, any>,
+      body: unknown,
+      sessionId?: string,
+      extraHeaders: Record<string, string> = {},
+    ) {
       const headers: Record<string, string> = {
         'content-type': 'application/json',
         accept: 'application/json, text/event-stream',
+        ...extraHeaders,
       }
       if (sessionId) headers['mcp-session-id'] = sessionId
       return cli.fetch(
@@ -5694,6 +5819,71 @@ describe('fetch', () => {
       `)
     })
 
+    test('POST /mcp omits commands with mcp false while command routes still work', async () => {
+      const cli = Cli.create('test', {
+        version: '1.0.0',
+        mcp: { tools: { discovery: 'direct' } },
+      })
+      cli.command('public', { run: () => ({ public: true }) })
+      cli.command('secret', { mcp: false, run: () => ({ secret: true }) })
+
+      const { sessionId } = await initSession(cli)
+      const res = await mcpRequest(
+        cli,
+        { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+        sessionId,
+      )
+      const body = await res.json()
+      const route = await fetchJson(cli, new Request('http://localhost/secret'))
+      const argv = await serve(cli, ['secret', '--json'])
+
+      expect(body.result.tools.map((tool: any) => tool.name)).toMatchInlineSnapshot(`
+        [
+          "public",
+        ]
+      `)
+      expect(route.body.data).toMatchInlineSnapshot(`
+        {
+          "secret": true,
+        }
+      `)
+      expect(JSON.parse(argv.output)).toMatchInlineSnapshot(`
+        {
+          "secret": true,
+        }
+      `)
+    })
+
+    test('POST /mcp filters tools with root include and exclude patterns', async () => {
+      const cli = Cli.create('test', {
+        version: '1.0.0',
+        mcp: {
+          tools: {
+            discovery: 'direct',
+            include: ['docs_*'],
+            exclude: ['*_secret'],
+          },
+        },
+      })
+      cli.command('docs_list', { run: () => null })
+      cli.command('docs_secret', { run: () => null })
+      cli.command('users_list', { run: () => null })
+
+      const { sessionId } = await initSession(cli)
+      const res = await mcpRequest(
+        cli,
+        { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+        sessionId,
+      )
+      const body = await res.json()
+
+      expect(body.result.tools.map((tool: any) => tool.name)).toMatchInlineSnapshot(`
+        [
+          "docs_list",
+        ]
+      `)
+    })
+
     test('GET /mcp returns method not allowed in stateless mode', async () => {
       const cli = mcpCli()
       const res = await cli.fetch(
@@ -5749,6 +5939,44 @@ describe('fetch', () => {
             "message": "hello world",
           },
           "isError": undefined,
+        }
+      `)
+    })
+
+    test('POST /mcp exposes per-request headers to command context', async () => {
+      const cli = Cli.create('test', {
+        version: '1.0.0',
+        mcp: { tools: { discovery: 'direct' } },
+      })
+      cli.command('auth', {
+        description: 'Auth',
+        run: (c) => ({ authorization: c.request?.headers.get('authorization') }),
+      })
+
+      const call = async (authorization: string) => {
+        const res = await mcpRequest(
+          cli,
+          {
+            jsonrpc: '2.0',
+            id: authorization,
+            method: 'tools/call',
+            params: { name: 'auth', arguments: {} },
+          },
+          undefined,
+          { authorization },
+        )
+        const body = await res.json()
+        return JSON.parse(body.result.content[0].text)
+      }
+
+      expect(await call('Bearer one')).toMatchInlineSnapshot(`
+        {
+          "authorization": "Bearer one",
+        }
+      `)
+      expect(await call('Bearer two')).toMatchInlineSnapshot(`
+        {
+          "authorization": "Bearer two",
         }
       `)
     })

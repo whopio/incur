@@ -33,6 +33,7 @@ test('without schemas, run receives empty objects', () => {
     run(c) {
       expectTypeOf(c.args).toEqualTypeOf<{}>()
       expectTypeOf(c.options).toEqualTypeOf<{}>()
+      expectTypeOf(c.request).toEqualTypeOf<Request | undefined>()
       return { pong: true }
     },
   })
@@ -67,6 +68,28 @@ test('fetch command accepts OpenAPI object and URL sources', () => {
     fetch,
     openapi: { paths: {} },
     openapiConfig: { mode: 'operation' },
+  })
+})
+
+test('command accepts MCP string URL and object sources', () => {
+  const cli = Cli.create('test')
+  const fetch = () => new Response()
+
+  cli.command('docsString', {
+    mcp: 'https://mcp.example.com/mcp',
+  })
+
+  cli.command('docsUrl', {
+    mcp: new URL('https://mcp.example.com/mcp'),
+  })
+
+  cli.command('docsObject', {
+    mcp: {
+      url: new URL('https://mcp.example.com/mcp'),
+      headers: { authorization: 'Bearer token' },
+      fetch,
+    },
+    outputPolicy: 'agent-only',
   })
 })
 
@@ -368,12 +391,29 @@ test('command mcp metadata accepts instructions and annotations', () => {
     run: () => ({ ok: true }),
   })
 
+  Cli.create('test').command('hidden', {
+    mcp: false,
+    run: () => ({ ok: true }),
+  })
+
   Cli.create('test', {
     mcp: {
       instructions: 'Use this server for test commands.',
       stateless: false,
+      tools: {
+        discovery: 'progressive',
+        include: ['read_*'],
+        exclude: ['*_secret'],
+      },
       // @ts-expect-error -- annotations belong on command definitions
       annotations: { readOnlyHint: true },
+    },
+  })
+
+  Cli.create('test', {
+    mcp: {
+      // @ts-expect-error -- discovery only accepts supported strategies
+      tools: { discovery: 'lazy' },
     },
   })
 })
