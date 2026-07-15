@@ -3,6 +3,7 @@ import * as Fetch from './Fetch.js';
 import * as Formatter from './Formatter.js';
 import { type CommandMeta } from './internal/command.js';
 import * as Mcp from './Mcp.js';
+import * as McpSource from './McpSource.js';
 import type { Handler as MiddlewareHandler } from './middleware.js';
 import * as Openapi from './Openapi.js';
 export type { MiddlewareHandler };
@@ -41,6 +42,14 @@ export type Cli<commands extends CommandsMap = {}, vars extends z.ZodObject<any>
             fetch: FetchSource;
             openapi?: Openapi.OpenAPISource | undefined;
             openapiConfig?: Openapi.Config | undefined;
+            outputPolicy?: OutputPolicy | undefined;
+            /** Set to `false` to hide this command group from MCP clients. */
+            mcp?: false | undefined;
+        }): Cli<commands, vars, env, globals>;
+        /** Mounts a remote MCP server as a command group. */
+        <const name extends string>(name: name, definition: {
+            description?: string | undefined;
+            mcp: McpSource.Source;
             outputPolicy?: OutputPolicy | undefined;
         }): Cli<commands, vars, env, globals>;
     };
@@ -237,6 +246,8 @@ export declare namespace create {
             instructions?: string | undefined;
             /** Disable HTTP MCP session management. Defaults to `true`. */
             stateless?: boolean | undefined;
+            /** Controls how command tools are exposed to MCP clients. */
+            tools?: Mcp.ToolFilter | undefined;
         } | undefined;
         /** Options for the built-in `skills add` command. */
         sync?: {
@@ -281,6 +292,7 @@ export type FetchSource = Fetch.Source;
 type InternalGroup = {
     _group: true;
     description?: string | undefined;
+    mcp?: false | undefined;
     middlewares?: MiddlewareHandler[] | undefined;
     outputPolicy?: OutputPolicy | undefined;
     commands: Map<string, CommandEntry>;
@@ -375,7 +387,9 @@ type CommandDefinition<args extends z.ZodObject<any> | undefined = undefined, en
     /** Plain text hint displayed after examples and before global options. */
     hint?: string | undefined;
     /** MCP-specific metadata exposed when this command is served as a tool. */
-    mcp?: {
+    mcp?: 
+    /** Set to `false` to hide this command from MCP clients. */
+    false | {
         /** Override the command name exposed to MCP clients. */
         name?: string | undefined;
         /** Override the command description exposed to MCP clients. */
@@ -428,6 +442,8 @@ type CommandDefinition<args extends z.ZodObject<any> | undefined = undefined, en
         ok: (data: InferReturn<output>, meta?: {
             cta?: CtaBlock | undefined;
         }) => never;
+        /** The inbound HTTP request when invoked via HTTP or HTTP MCP; undefined for CLI/stdio invocations. */
+        request?: Request | undefined;
         options: InferOutput<options>;
         /** Variables set by middleware. */
         var: InferVars<vars>;

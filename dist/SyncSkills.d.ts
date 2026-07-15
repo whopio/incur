@@ -21,7 +21,7 @@ export declare namespace sync {
             destructive?: boolean | undefined;
             env?: any;
             hint?: string | undefined;
-            mcp?: {
+            mcp?: false | {
                 annotations?: Mcp.ToolAnnotations | undefined;
             } | undefined;
             options?: any;
@@ -72,7 +72,7 @@ export declare namespace list {
             destructive?: boolean | undefined;
             env?: any;
             hint?: string | undefined;
-            mcp?: {
+            mcp?: false | {
                 annotations?: Mcp.ToolAnnotations | undefined;
             } | undefined;
             options?: any;

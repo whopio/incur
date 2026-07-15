@@ -1,6 +1,7 @@
 import type { Document } from '@scalar/openapi-types/3.2';
 import { z } from 'zod';
 import * as Cli from './Cli.js';
+import type * as Mcp from './Mcp.js';
 /** A minimal OpenAPI 3.x spec shape. Accepts both hand-written specs and generated ones (e.g. from `@hono/zod-openapi`). */
 export type OpenAPISpec = {
     components?: {
@@ -17,8 +18,14 @@ export type OpenAPISource = OpenAPISpec | string | URL;
 export type Mode = 'namespace' | 'operation';
 /** Configuration for generating commands from an OpenAPI document. */
 export type Config = {
+    /** Strips `examples`, oversized `pattern` regexes, and regex-deriving date/time formats from generated schemas, shrinking MCP tool listings. Defaults to `false`. */
+    compact?: boolean | undefined;
+    /** Header names copied from the inbound request onto upstream requests when not explicitly set. */
+    forwardHeaders?: string[] | undefined;
     /** Command naming strategy. Defaults to `'operation'`. */
     mode?: Mode | undefined;
+    /** Generates credential options from the document's `security` requirements. Defaults to `true`. */
+    security?: boolean | undefined;
 };
 /** Options for generating an OpenAPI document from an incur CLI. */
 export type GenerateOptions = {
@@ -50,6 +57,10 @@ type FetchHandler = (req: Request) => Response | Promise<Response>;
 type GeneratedCommand = {
     args?: z.ZodObject<any> | undefined;
     description?: string | undefined;
+    mcp?: {
+        annotations: Mcp.ToolAnnotations;
+        description?: string | undefined;
+    } | undefined;
     options?: z.ZodObject<any> | undefined;
     run: (context: any) => any;
 };
@@ -79,5 +90,9 @@ export declare namespace generateCommands {
         config?: Config | undefined;
     };
 }
+/** Converts a JSON Schema object to a Zod schema. */
+export declare function toZod(schema: Record<string, unknown>): z.ZodType;
+/** Wraps a Zod schema with coercion if the base type is number or boolean (argv is always strings). */
+export declare function coerceIfNeeded(schema: z.ZodType): z.ZodType;
 export {};
 //# sourceMappingURL=Openapi.d.ts.map

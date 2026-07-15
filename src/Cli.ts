@@ -1442,10 +1442,8 @@ async function serveImpl(
     if (human && !fullOutput) {
       if (output.ok && output.data != null && renderOutput) {
         // Give the CLI's custom renderer first crack; fall back to the default formatter.
-        const custom =
-          !formatExplicit && options.renderer != null
-            ? options.renderer(output.data)
-            : null
+        // `human` already excludes explicit `--format`, so the renderer only sees default TTY output.
+        const custom = options.renderer != null ? options.renderer(output.data) : null
         const rendered = custom ?? Formatter.format(output.data, format)
         const t = truncate(rendered)
         writeln(t.text)

@@ -5,7 +5,7 @@ import * as Parser from '../Parser.js';
 const sentinel = Symbol.for('incur.sentinel');
 /** @internal Unified command execution used by CLI, HTTP, and MCP transports. */
 export async function execute(command, options) {
-    const { argv, inputOptions, agent, format, formatExplicit, name, path, version, envSource = process.env, env: envSchema, globals = {}, vars: varsSchema, middlewares = [], } = options;
+    const { argv, inputOptions, agent, format, formatExplicit, name, path, version, envSource = process.env, env: envSchema, globals = {}, vars: varsSchema, middlewares = [], request, } = options;
     const displayName = options.displayName ?? name;
     const parseMode = options.parseMode ?? 'argv';
     const varsMap = varsSchema ? varsSchema.parse({}) : {};
@@ -62,6 +62,7 @@ export async function execute(command, options) {
             name,
             ok: okFn,
             options: parsedOptions,
+            request,
             var: varsMap,
             version,
         });
@@ -141,6 +142,7 @@ export async function execute(command, options) {
                 formatExplicit,
                 globals,
                 name,
+                request,
                 set(key, value) {
                     varsMap[key] = value;
                 },

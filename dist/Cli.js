@@ -3,7 +3,6 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { estimateTokenCount, sliceByTokens } from 'tokenx';
-import { z } from 'zod';
 import * as Completions from './Completions.js';
 import { IncurError, ParseError, ValidationError } from './Errors.js';
 import * as Fetch from './Fetch.js';
@@ -18,6 +17,7 @@ import * as Json from './internal/json.js';
 import { detectRunner } from './internal/pm.js';
 import * as Yaml from './internal/yaml.js';
 import * as Mcp from './Mcp.js';
+import * as McpSource from './McpSource.js';
 import * as Openapi from './Openapi.js';
 import * as Parser from './Parser.js';
 import * as Schema from './Schema.js';
@@ -37,6 +37,7 @@ export function create(nameOrDefinition, definition) {
     const pending = [];
     const mcpHandler = createMcpHttpHandler(name, def.version ?? '0.0.0', {
         stateless: def.mcp?.stateless,
+        tools: def.mcp?.tools,
     });
     if (def.openapi && rootFetch) {
         pending.push((async () => {
@@ -55,6 +56,21 @@ export function create(nameOrDefinition, definition) {
         vars: def.vars,
         command(nameOrCli, def) {
             if (typeof nameOrCli === 'string') {
+                if (isMcpSourceDefinition(def)) {
+                    pending.push((async () => {
+                        const resolved = await McpSource.resolve(def.mcp);
+                        const generated = McpSource.generateCommands(resolved);
+                        const entry = {
+                            _group: true,
+                            description: def.description,
+                            commands: generated,
+                            ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
+                        };
+                        assertNoGlobalOptionConflicts(nameOrCli, entry, toGlobals.get(cli));
+                        commands.set(nameOrCli, entry);
+                    })());
+                    return cli;
+                }
                 if (def && 'fetch' in def && isFetchSource(def.fetch)) {
                     const fetch = resolveFetch(def.fetch);
                     // OpenAPI + fetch → generate typed command group (async, resolved before serve)
@@ -72,6 +88,7 @@ export function create(nameOrDefinition, definition) {
                                 description: def.description,
                                 commands: generated,
                                 ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
+                                ...(def.mcp === false ? { mcp: false } : undefined),
                             };
                             assertNoGlobalOptionConflicts(nameOrCli, entry, toGlobals.get(cli));
                             commands.set(nameOrCli, entry);
@@ -217,7 +234,8 @@ export function create(nameOrDefinition, definition) {
 async function serveImpl(name, commands, argv, options = {}) {
     const stdout = options.stdout ?? ((s) => process.stdout.write(s));
     const exit = options.exit ?? ((code) => process.exit(code));
-    const human = process.stdout.isTTY === true;
+    const tty = process.stdout.isTTY === true;
+    let human = tty;
     const configEnabled = options.config !== undefined;
     const configFlag = options.config?.flag;
     const displayName = resolveDisplayName(name, options.aliases);
@@ -254,6 +272,7 @@ async function serveImpl(name, commands, argv, options = {}) {
         return;
     }
     const { fullOutput, format: formatFlag, formatExplicit, filterOutput, tokenLimit, tokenOffset, tokenCount, llms, llmsFull, mcp: mcpFlag, help, version, schema, configPath, configDisabled, rest, } = builtinFlags;
+    human = tty && !formatExplicit;
     let globals = {};
     let filtered = rest;
     function parseGlobalOptions(validate) {
@@ -291,6 +310,7 @@ async function serveImpl(name, commands, argv, options = {}) {
             vars: options.vars,
             version: options.version,
             ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
+            ...(options.mcp?.tools ? { tools: options.mcp.tools } : undefined),
         });
         return;
     }
@@ -931,9 +951,8 @@ async function serveImpl(name, commands, argv, options = {}) {
         if (human && !fullOutput) {
             if (output.ok && output.data != null && renderOutput) {
                 // Give the CLI's custom renderer first crack; fall back to the default formatter.
-                const custom = !formatExplicit && options.renderer != null
-                    ? options.renderer(output.data)
-                    : null;
+                // `human` already excludes explicit `--format`, so the renderer only sees default TTY output.
+                const custom = options.renderer != null ? options.renderer(output.data) : null;
                 const rendered = custom ?? Formatter.format(output.data, format);
                 const t = truncate(rendered);
                 writeln(t.text);
@@ -1270,29 +1289,17 @@ function createMcpHttpHandler(name, version, options = {}) {
         if (!transport) {
             const { fromJsonSchema, McpServer, WebStandardStreamableHTTPServerTransport } = await import('@modelcontextprotocol/server');
             const server = new McpServer({ name, version });
-            for (const tool of Mcp.collectTools(commands, [])) {
-                const mergedShape = {
-                    ...tool.command.args?.shape,
-                    ...tool.command.options?.shape,
-                };
-                const hasInput = Object.keys(mergedShape).length > 0;
-                server.registerTool(tool.name, {
-                    ...(tool.description ? { description: tool.description } : undefined),
-                    ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
-                    ...(tool.outputSchema
-                        ? { outputSchema: fromJsonSchema(tool.outputSchema) }
-                        : undefined),
-                }, async (...callArgs) => {
-                    const params = hasInput ? callArgs[0] : {};
-                    return Mcp.callTool(tool, params, {
-                        name,
-                        version,
-                        middlewares: mcpOptions?.middlewares,
-                        env: mcpOptions?.env,
-                        vars: mcpOptions?.vars,
-                    });
-                });
-            }
+            Mcp.registerTools(server, commands, {
+                env: mcpOptions?.env,
+                fromJsonSchema,
+                middlewares: mcpOptions?.middlewares,
+                name,
+                request: (extra) => extra?.http?.req,
+                sendNotification: (notification) => server.server.notification(notification),
+                tools: options.tools,
+                vars: mcpOptions?.vars,
+                version,
+            });
             const transportOptions = stateless
                 ? { enableJsonResponse: true }
                 : {
@@ -1410,7 +1417,7 @@ async function fetchImpl(name, commands, req, options = {}) {
     if (segments.length === 0) {
         // Root path
         if (options.rootCommand)
-            return executeCommand(name, options.rootCommand, [], inputOptions, start, options);
+            return executeCommand(name, options.rootCommand, [], inputOptions, req, start, options);
         return jsonResponse({
             ok: false,
             error: { code: 'COMMAND_NOT_FOUND', message: 'No root command defined.' },
@@ -1444,13 +1451,13 @@ async function fetchImpl(name, commands, req, options = {}) {
         return resolved.fetchGateway.fetch(req);
     const { command, path, rest } = resolved;
     const groupMiddlewares = 'middlewares' in resolved ? resolved.middlewares : [];
-    return executeCommand(path, command, rest, inputOptions, start, {
+    return executeCommand(path, command, rest, inputOptions, req, start, {
         ...options,
         groupMiddlewares,
     });
 }
 /** @internal Executes a resolved command for the fetch handler and returns a JSON Response. */
-async function executeCommand(path, command, rest, inputOptions, start, options) {
+async function executeCommand(path, command, rest, inputOptions, request, start, options) {
     function jsonResponse(body, status) {
         return new Response(Json.stringify(body), {
             status,
@@ -1499,6 +1506,7 @@ async function executeCommand(path, command, rest, inputOptions, start, options)
         name: options.name ?? path,
         parseMode: 'split',
         path,
+        request,
         vars: options.vars,
         version: options.version,
     });
@@ -1995,8 +2003,13 @@ async function runMcpDoctor(name, commands, options) {
         vars: options.vars,
         version: options.version,
         ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
+        tools: { ...options.mcp?.tools, discovery: 'direct' },
     }).catch((error) => {
         serveError = error;
+    });
+    let serveFinished = false;
+    void done.finally(() => {
+        serveFinished = true;
     });
     input.write(`${Json.stringify({
         jsonrpc: '2.0',
@@ -2009,7 +2022,7 @@ async function runMcpDoctor(name, commands, options) {
         },
     })}\n`);
     input.write(`${Json.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })}\n`);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await waitForMcpDoctorResponses(chunks, () => serveFinished);
     input.end();
     await done;
     if (serveError)
@@ -2067,6 +2080,14 @@ async function runMcpDoctor(name, commands, options) {
         errors,
     };
 }
+async function waitForMcpDoctorResponses(chunks, finished) {
+    const started = Date.now();
+    while (!finished() && (chunks.join('').match(/\n/g)?.length ?? 0) < 2) {
+        if (Date.now() - started >= 1_000)
+            return;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+}
 function parseMcpDoctorResponses(chunks) {
     const responses = [];
     for (const line of chunks.join('').split(/\r?\n/)) {
@@ -2115,6 +2136,14 @@ function isFetchSource(value) {
         return false;
     const source = value;
     return typeof source.fetch === 'function' && source.url instanceof URL;
+}
+function isMcpSourceDefinition(value) {
+    if (typeof value !== 'object' || value === null || !('mcp' in value))
+        return false;
+    const source = value.mcp;
+    if (typeof source === 'string' || source instanceof URL)
+        return true;
+    return typeof source === 'object' && source !== null && 'url' in source;
 }
 function resolveFetch(source) {
     if (typeof source === 'function')
@@ -2542,7 +2571,8 @@ export function collectSkillCommands(commands, prefix, groups, rootCommand) {
     return result.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
 }
 function isDestructive(command) {
-    return command.destructive === true || command.mcp?.annotations?.destructiveHint === true;
+    return (command.destructive === true ||
+        (command.mcp !== false && command.mcp?.annotations?.destructiveHint === true));
 }
 function appendDestructiveHint(hint) {
     if (!hint)

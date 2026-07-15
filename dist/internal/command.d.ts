@@ -44,6 +44,8 @@ export declare namespace execute {
         parseMode?: 'argv' | 'split' | 'flat' | undefined;
         /** The resolved command path. */
         path: string;
+        /** The inbound HTTP request when invoked via HTTP or HTTP MCP; undefined for CLI/stdio invocations. */
+        request?: Request | undefined;
         /** Vars schema for middleware variables. */
         vars?: z.ZodObject<any> | undefined;
         /** CLI version string. */
