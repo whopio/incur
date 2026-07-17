@@ -142,6 +142,33 @@ test('register handles quoted command paths with spaces', async () => {
   })
 })
 
+test('register passes quoted binary paths to add-mcp unquoted with --args flags', async () => {
+  const { execFile } = await import('node:child_process')
+  vi.mocked(execFile).mockClear()
+
+  await register('my-cli', {
+    command: '"/path/to my/cli" --mcp',
+    agents: ['claude-desktop'],
+  })
+
+  const [, args] = vi.mocked(execFile).mock.calls[0]! as unknown as [string, string[]]
+  const start = args.indexOf('add-mcp') + 1
+  expect(args.slice(start, start + 3)).toEqual(['/path/to my/cli', '--args', '--mcp'])
+})
+
+test('register passes runner commands to add-mcp as a single string', async () => {
+  const { execFile } = await import('node:child_process')
+  vi.mocked(execFile).mockClear()
+
+  await register('my-cli', {
+    command: 'npx my-cli --mcp',
+    agents: ['claude-desktop'],
+  })
+
+  const [, args] = vi.mocked(execFile).mock.calls[0]! as unknown as [string, string[]]
+  expect(args).toContain('npx my-cli --mcp')
+})
+
 test('register uses bare name for global binary installs', async () => {
   process.argv[1] = '/usr/local/bin/my-cli'
 
