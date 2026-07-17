@@ -19,7 +19,7 @@ export async function register(
 
   // Run add-mcp for agents it supports (skip if only targeting Amp)
   if (!ampOnly) {
-    const args = [command, '--name', name, '-y']
+    const args = [...addMcpCommandArgs(command), '--name', name, '-y']
     if (options.global !== false) args.push('-g')
     for (const agent of targetAgents.filter((a) => a !== 'amp')) args.push('-a', agent)
 
@@ -165,6 +165,31 @@ export function detectPackageSpecifier(name: string): string {
   } catch {}
 
   return name
+}
+
+/**
+ * @internal Builds the add-mcp arguments for a command string. add-mcp splits
+ * command strings on spaces without unquoting, so a quoted binary path ends up
+ * with literal quotes in the written config; an unquoted absolute path swallows
+ * the flags into the command. Path commands are therefore passed as a bare
+ * positional plus repeatable `--args`; runner commands (`npx ...`) are passed
+ * as-is since add-mcp parses those correctly.
+ */
+function addMcpCommandArgs(command: string): string[] {
+  const [bin, ...binArgs] = splitCommand(command)
+  if (!bin || !looksLikePath(bin)) return [command]
+  return [bin, ...binArgs.flatMap((arg) => ['--args', arg])]
+}
+
+/** @internal Mirrors add-mcp's own path detection. */
+function looksLikePath(input: string): boolean {
+  return (
+    input.startsWith('/') ||
+    input.startsWith('~/') ||
+    input.startsWith('./') ||
+    input.startsWith('../') ||
+    /^[A-Za-z]:[\\/]/.test(input)
+  )
 }
 
 /** Splits a command string into tokens, respecting single and double quotes. */
