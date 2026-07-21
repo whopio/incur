@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -127,10 +127,46 @@ function shouldUseBareCommand(name: string): boolean {
   if (!bin) return false
 
   const info = nodeModulesInfo()
-  if (info) return !info.entry.startsWith('.bin/') && !packageDependsOn(info.root, name)
+  if (info)
+    return (
+      !info.entry.startsWith('.bin/') &&
+      !packageDependsOn(info.root, entryPackageName() ?? name)
+    )
 
   const file = bin.replace(/\\/g, '/').split('/').pop()
   return file === name || file === `${name}.cmd` || file === `${name}.ps1`
+}
+
+/**
+ * @internal Resolves the npm package name of the running entrypoint by walking
+ * up from the (symlink-resolved) argv[1] to the nearest package.json. The bin
+ * name is not necessarily the package name (e.g. bin `whop` in package
+ * `@whop/cli`), and a runner command built from the bin name would install the
+ * wrong package.
+ */
+function entryPackageName(): string | null {
+  const bin = process.argv[1]
+  if (!bin) return null
+
+  let dir: string
+  try {
+    dir = dirname(realpathSync(bin))
+  } catch {
+    return null
+  }
+
+  while (true) {
+    const pkgPath = join(dir, 'package.json')
+    if (existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
+        if (typeof pkg.name === 'string' && pkg.name) return pkg.name
+      } catch {}
+    }
+    const parent = dirname(dir)
+    if (parent === dir) return null
+    dir = parent
+  }
 }
 
 /** @internal Checks whether the entrypoint came from a project dependency install. */
@@ -151,20 +187,21 @@ function packageDependsOn(root: string, name: string): boolean {
 
 /** @internal Detects the package specifier used to run this CLI (handles dlx/npx URL and version installs). */
 export function detectPackageSpecifier(name: string): string {
+  const pkgName = entryPackageName() ?? name
   const info = nodeModulesInfo()
-  if (!info) return name
+  if (!info) return pkgName
 
   try {
     const pkg = JSON.parse(readFileSync(join(info.root, 'package.json'), 'utf-8'))
     const deps = pkg.dependencies ?? {}
-    const spec = deps[name]
-    if (!spec || Object.keys(deps).length !== 1) return name
+    const spec = deps[pkgName]
+    if (!spec || Object.keys(deps).length !== 1) return pkgName
 
     if (/^https?:\/\//.test(spec) || spec.startsWith('file:')) return spec
-    if (/^\d/.test(spec)) return `${name}@${spec}`
+    if (/^\d/.test(spec)) return `${pkgName}@${spec}`
   } catch {}
 
-  return name
+  return pkgName
 }
 
 /**
@@ -216,10 +253,19 @@ function splitCommand(input: string): string[] {
   return tokens
 }
 
-/** Promisified execFile with stderr in error message. */
+/**
+ * Promisified execFile with stderr in error message. Runs through a shell on
+ * Windows: package-manager runners (`npx`, `pnpx`, `bunx`) are `.cmd` shims
+ * there, which Node refuses to spawn without one (CVE-2024-27980 hardening).
+ * The shell joins args with spaces, so args are quoted first.
+ */
 function exec(cmd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+  const windows = process.platform === 'win32'
+  const finalArgs = windows
+    ? args.map((arg) => (/[\s"]/.test(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg))
+    : args
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, (error, stdout, stderr) => {
+    execFile(cmd, finalArgs, { shell: windows }, (error, stdout, stderr) => {
       if (error) {
         const msg = stderr?.trim() || stdout?.trim() || error.message
         reject(new Error(msg))

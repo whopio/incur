@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { detectPackageSpecifier, register } from './SyncMcp.js'
 
 vi.mock('node:child_process', () => ({
-  execFile: vi.fn((_cmd: string, _args: string[], cb: Function) => {
+  execFile: vi.fn((_cmd: string, _args: string[], _opts: object, cb: Function) => {
     cb(null, '│ ✓ Claude Code: ~/.claude.json │\n│ ✓ Cursor: ~/.cursor/mcp.json │\n', '')
   }),
 }))
@@ -89,6 +89,30 @@ test('returns bare name for range specifier', () => {
 test('returns bare name for tag specifier', () => {
   setupPkg({ 'my-cli': 'latest' })
   expect(detectPackageSpecifier('my-cli')).toBe('my-cli')
+})
+
+function setupScopedEntry(rootDeps: Record<string, string> | null) {
+  const pkgDir = join(tmp, 'node_modules', '@scope', 'pkg')
+  mkdirSync(join(pkgDir, 'dist'), { recursive: true })
+  writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: '@scope/pkg' }))
+  writeFileSync(join(pkgDir, 'dist', 'bin.js'), '')
+  if (rootDeps) writeFileSync(join(tmp, 'package.json'), JSON.stringify({ dependencies: rootDeps }))
+  process.argv[1] = join(pkgDir, 'dist', 'bin.js')
+}
+
+test('resolves the package name from the entrypoint package.json when it differs from the bin name', () => {
+  setupScopedEntry(null)
+  expect(detectPackageSpecifier('my-cli')).toBe('@scope/pkg')
+})
+
+test('resolves the root specifier under the entrypoint package name', () => {
+  setupScopedEntry({ '@scope/pkg': 'https://pkg.pr.new/@scope/pkg@abc123' })
+  expect(detectPackageSpecifier('my-cli')).toBe('https://pkg.pr.new/@scope/pkg@abc123')
+})
+
+test('returns package-name@version for pinned scoped installs', () => {
+  setupScopedEntry({ '@scope/pkg': '1.2.3' })
+  expect(detectPackageSpecifier('my-cli')).toBe('@scope/pkg@1.2.3')
 })
 
 // --- register tests ---
@@ -255,6 +279,37 @@ test('register uses runner for node_modules installs', async () => {
   // Should include a runner prefix (npx, pnpx, or bunx)
   expect(result.command).toMatch(/^(npx|pnpx|bunx)\s/)
   expect(result.command).toContain('--mcp')
+})
+
+test('register spawns without a shell on non-Windows platforms', async () => {
+  const { execFile } = await import('node:child_process')
+  vi.mocked(execFile).mockClear()
+
+  await register('my-cli', { command: 'npx my-cli --mcp', agents: ['claude-desktop'] })
+
+  const [, , opts] = vi.mocked(execFile).mock.calls[0]! as unknown as [string, string[], object]
+  expect(opts).toEqual({ shell: false })
+})
+
+test('register spawns through a shell with quoted args on Windows', async () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  try {
+    const { execFile } = await import('node:child_process')
+    vi.mocked(execFile).mockClear()
+
+    await register('my-cli', { command: 'npx my-cli --mcp', agents: ['claude-desktop'] })
+
+    const [, args, opts] = vi.mocked(execFile).mock.calls[0]! as unknown as [
+      string,
+      string[],
+      object,
+    ]
+    expect(opts).toEqual({ shell: true })
+    expect(args).toContain('"npx my-cli --mcp"')
+  } finally {
+    Object.defineProperty(process, 'platform', platform)
+  }
 })
 
 test('register writes amp config to existing settings', async () => {
