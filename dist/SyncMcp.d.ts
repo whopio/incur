@@ -1,4 +1,9 @@
-/** Registers the CLI as an MCP server via `npx add-mcp` and direct config writes for unsupported agents. */
+/**
+ * Registers the CLI as an MCP server. Agent config writes run in-process through
+ * add-mcp's library rather than a spawned `npx add-mcp`, so a standalone binary
+ * (which bundles add-mcp at build time) registers without Node or npx installed.
+ * Amp is written directly since add-mcp does not support it.
+ */
 export declare function register(name: string, options?: register.Options): Promise<register.Result>;
 export declare namespace register {
     /** Options for registering an MCP server. */

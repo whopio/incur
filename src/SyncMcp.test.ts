@@ -4,10 +4,28 @@ import { join } from 'node:path'
 
 import { detectPackageSpecifier, register } from './SyncMcp.js'
 
-vi.mock('node:child_process', () => ({
-  execFile: vi.fn((_cmd: string, _args: string[], _opts: object, cb: Function) => {
-    cb(null, '│ ✓ Claude Code: ~/.claude.json │\n│ ✓ Cursor: ~/.cursor/mcp.json │\n', '')
-  }),
+const addMcp = vi.hoisted(() => ({
+  registry: {
+    'claude-code': { displayName: 'Claude Code' },
+    'claude-desktop': { displayName: 'Claude Desktop' },
+    cursor: { displayName: 'Cursor' },
+    codex: { displayName: 'Codex' },
+  } as Record<string, { displayName: string }>,
+  detectedGlobal: [] as string[],
+  detectedProject: [] as string[],
+  upserts: [] as Array<{ agent: string; name: string; config: unknown; options: unknown }>,
+  failFor: new Set<string>(),
+}))
+
+vi.mock('add-mcp', () => ({
+  agents: addMcp.registry,
+  getAgentTypes: () => Object.keys(addMcp.registry),
+  detectGlobalAgents: async () => addMcp.detectedGlobal,
+  detectProjectAgents: () => addMcp.detectedProject,
+  upsertServer: (agent: string, name: string, config: unknown, options: unknown) => {
+    addMcp.upserts.push({ agent, name, config, options })
+    return { success: !addMcp.failFor.has(agent), path: '' }
+  },
 }))
 
 let fakeHome: string | undefined
@@ -116,41 +134,90 @@ test('returns package-name@version for pinned scoped installs', () => {
 })
 
 // --- register tests ---
+//
+// add-mcp is mocked here: these tests cover incur's orchestration (target
+// resolution, Amp handling, command splitting), not add-mcp's own config
+// writing. add-mcp captures the home directory at import, so its real writes
+// cannot be redirected by the per-test os mock; the in-process registration end
+// to end (including a Node/npx-free standalone binary) is covered separately.
 
-test('register calls add-mcp and writes amp config', async () => {
-  const result = await register('my-cli', { command: 'npx my-cli --mcp' })
-
-  expect(result.command).toBe('npx my-cli --mcp')
-  expect(result.agents).toContain('Claude Code')
-  expect(result.agents).toContain('Cursor')
-  expect(result.agents).toContain('Amp')
-
-  const configPath = join(fakeHome!, '.config', 'amp', 'settings.json')
-  expect(existsSync(configPath)).toBe(true)
-  const config = JSON.parse(readFileSync(configPath, 'utf-8'))
-  expect(config['amp.mcpServers']['my-cli']).toEqual({
-    command: 'npx',
-    args: ['my-cli', '--mcp'],
-  })
+beforeEach(() => {
+  addMcp.detectedGlobal = []
+  addMcp.detectedProject = []
+  addMcp.upserts.length = 0
+  addMcp.failFor.clear()
 })
 
-test('register with agents: ["amp"] skips add-mcp', async () => {
-  const { execFile } = await import('node:child_process')
-  vi.mocked(execFile).mockClear()
+test('register writes to each explicitly requested agent', async () => {
+  const result = await register('my-cli', {
+    command: 'npx my-cli --mcp',
+    agents: ['claude-code', 'cursor'],
+  })
 
+  expect(result.agents).toEqual(['Claude Code', 'Cursor'])
+  expect(addMcp.upserts.map((u) => u.agent)).toEqual(['claude-code', 'cursor'])
+  expect(addMcp.upserts[0]!.config).toEqual({ command: 'npx', args: ['my-cli', '--mcp'] })
+})
+
+test('register with no agents registers every detected agent plus Amp', async () => {
+  addMcp.detectedGlobal = ['claude-code', 'cursor']
+
+  const result = await register('my-cli', { command: 'npx my-cli --mcp' })
+
+  expect(result.agents).toEqual(['Claude Code', 'Cursor', 'Amp'])
+  expect(addMcp.upserts.map((u) => u.agent)).toEqual(['claude-code', 'cursor'])
+})
+
+test('register with no agents falls back to all known agents when none detected', async () => {
+  const result = await register('my-cli', { command: 'npx my-cli --mcp' })
+
+  expect(addMcp.upserts.map((u) => u.agent)).toEqual([
+    'claude-code',
+    'claude-desktop',
+    'cursor',
+    'codex',
+  ])
+  expect(result.agents).toContain('Claude Desktop')
+  expect(result.agents).toContain('Amp')
+})
+
+test('register skips agents add-mcp reports as failed', async () => {
+  addMcp.failFor.add('cursor')
+
+  const result = await register('my-cli', {
+    command: 'npx my-cli --mcp',
+    agents: ['claude-code', 'cursor'],
+  })
+
+  expect(result.agents).toEqual(['Claude Code'])
+})
+
+test('register maps --no-global to a local install', async () => {
+  await register('my-cli', {
+    command: 'npx my-cli --mcp',
+    agents: ['claude-code'],
+    global: false,
+  })
+
+  expect(addMcp.upserts[0]!.options).toEqual({ local: true })
+})
+
+test('register with agents: ["amp"] writes only Amp and skips add-mcp', async () => {
   const result = await register('my-cli', {
     command: 'npx my-cli --mcp',
     agents: ['amp'],
   })
 
-  expect(execFile).not.toHaveBeenCalled()
   expect(result.agents).toEqual(['Amp'])
+  expect(addMcp.upserts).toEqual([])
+
+  const config = JSON.parse(
+    readFileSync(join(fakeHome!, '.config', 'amp', 'settings.json'), 'utf-8'),
+  )
+  expect(config['amp.mcpServers']['my-cli']).toEqual({ command: 'npx', args: ['my-cli', '--mcp'] })
 })
 
 test('register handles quoted command paths with spaces', async () => {
-  const { execFile } = await import('node:child_process')
-  vi.mocked(execFile).mockClear()
-
   const result = await register('my-cli', {
     command: '"/path/to my/cli" --mcp',
     agents: ['amp'],
@@ -158,84 +225,37 @@ test('register handles quoted command paths with spaces', async () => {
 
   expect(result.agents).toEqual(['Amp'])
 
-  const configPath = join(fakeHome!, '.config', 'amp', 'settings.json')
-  const config = JSON.parse(readFileSync(configPath, 'utf-8'))
+  const config = JSON.parse(
+    readFileSync(join(fakeHome!, '.config', 'amp', 'settings.json'), 'utf-8'),
+  )
   expect(config['amp.mcpServers']['my-cli']).toEqual({
     command: '/path/to my/cli',
     args: ['--mcp'],
   })
 })
 
-test('register passes quoted binary paths to add-mcp unquoted with --args flags', async () => {
-  const { execFile } = await import('node:child_process')
-  vi.mocked(execFile).mockClear()
-
-  await register('my-cli', {
-    command: '"/path/to my/cli" --mcp',
-    agents: ['claude-desktop'],
-  })
-
-  const [, args] = vi.mocked(execFile).mock.calls[0]! as unknown as [string, string[]]
-  const start = args.indexOf('add-mcp') + 1
-  expect(args.slice(start, start + 3)).toEqual(['/path/to my/cli', '--args', '--mcp'])
-})
-
-test('register passes runner commands to add-mcp as a single string', async () => {
-  const { execFile } = await import('node:child_process')
-  vi.mocked(execFile).mockClear()
-
-  await register('my-cli', {
-    command: 'npx my-cli --mcp',
-    agents: ['claude-desktop'],
-  })
-
-  const [, args] = vi.mocked(execFile).mock.calls[0]! as unknown as [string, string[]]
-  expect(args).toContain('npx my-cli --mcp')
-})
-
 test('register uses bare name for global binary installs', async () => {
   process.argv[1] = '/usr/local/bin/my-cli'
 
-  const { execFile } = await import('node:child_process')
-  vi.mocked(execFile).mockClear()
-
-  const result = await register('my-cli', { agents: ['amp'] })
+  const result = await register('my-cli', { agents: ['claude-code'] })
 
   expect(result.command).toBe('my-cli --mcp')
-
-  const configPath = join(fakeHome!, '.config', 'amp', 'settings.json')
-  const config = JSON.parse(readFileSync(configPath, 'utf-8'))
-  expect(config['amp.mcpServers']['my-cli']).toEqual({
-    command: 'my-cli',
-    args: ['--mcp'],
-  })
+  expect(addMcp.upserts[0]!.config).toEqual({ command: 'my-cli', args: ['--mcp'] })
 })
 
 test('register uses the real binary path for bun compiled standalone binaries', async () => {
   process.argv[1] = '/$bunfs/root/index.js'
 
-  const { execFile } = await import('node:child_process')
-  vi.mocked(execFile).mockClear()
-
-  const result = await register('my-cli', { agents: ['amp'] })
+  const result = await register('my-cli', { agents: ['claude-code'] })
 
   expect(result.command).toBe(`"${process.execPath}" --mcp`)
-
-  const configPath = join(fakeHome!, '.config', 'amp', 'settings.json')
-  const config = JSON.parse(readFileSync(configPath, 'utf-8'))
-  expect(config['amp.mcpServers']['my-cli']).toEqual({
-    command: process.execPath,
-    args: ['--mcp'],
-  })
+  expect(addMcp.upserts[0]!.config).toEqual({ command: process.execPath, args: ['--mcp'] })
 })
 
 test('register uses runner for source entrypoints outside node_modules', async () => {
   process.argv[1] = join(tmp, 'dist', 'bin.js')
 
-  const { execFile } = await import('node:child_process')
-  vi.mocked(execFile).mockClear()
-
-  const result = await register('my-cli', { agents: ['amp'] })
+  const result = await register('my-cli', { agents: ['claude-code'] })
 
   expect(result.command).toMatch(/^(npx|pnpx|bunx)\s/)
   expect(result.command).toContain('my-cli --mcp')
@@ -244,10 +264,7 @@ test('register uses runner for source entrypoints outside node_modules', async (
 test('register uses bare name for global package entrypoints under node_modules', async () => {
   process.argv[1] = join(tmp, 'global', 'node_modules', 'my-cli', 'dist', 'bin.js')
 
-  const { execFile } = await import('node:child_process')
-  vi.mocked(execFile).mockClear()
-
-  const result = await register('my-cli', { agents: ['amp'] })
+  const result = await register('my-cli', { agents: ['claude-code'] })
 
   expect(result.command).toBe('my-cli --mcp')
 })
@@ -259,10 +276,7 @@ test('register uses runner for project dev dependency entrypoints under node_mod
   )
   process.argv[1] = join(tmp, 'node_modules', 'my-cli', 'dist', 'bin.js')
 
-  const { execFile } = await import('node:child_process')
-  vi.mocked(execFile).mockClear()
-
-  const result = await register('my-cli', { agents: ['amp'] })
+  const result = await register('my-cli', { agents: ['claude-code'] })
 
   expect(result.command).toMatch(/^(npx|pnpx|bunx)\s/)
   expect(result.command).toContain('my-cli --mcp')
@@ -271,45 +285,10 @@ test('register uses runner for project dev dependency entrypoints under node_mod
 test('register uses runner for node_modules installs', async () => {
   process.argv[1] = join(tmp, 'node_modules', '.bin', 'my-cli')
 
-  const { execFile } = await import('node:child_process')
-  vi.mocked(execFile).mockClear()
+  const result = await register('my-cli', { agents: ['claude-code'] })
 
-  const result = await register('my-cli', { agents: ['amp'] })
-
-  // Should include a runner prefix (npx, pnpx, or bunx)
   expect(result.command).toMatch(/^(npx|pnpx|bunx)\s/)
   expect(result.command).toContain('--mcp')
-})
-
-test('register spawns without a shell on non-Windows platforms', async () => {
-  const { execFile } = await import('node:child_process')
-  vi.mocked(execFile).mockClear()
-
-  await register('my-cli', { command: 'npx my-cli --mcp', agents: ['claude-desktop'] })
-
-  const [, , opts] = vi.mocked(execFile).mock.calls[0]! as unknown as [string, string[], object]
-  expect(opts).toEqual({ shell: false })
-})
-
-test('register spawns through a shell with quoted args on Windows', async () => {
-  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
-  Object.defineProperty(process, 'platform', { value: 'win32' })
-  try {
-    const { execFile } = await import('node:child_process')
-    vi.mocked(execFile).mockClear()
-
-    await register('my-cli', { command: 'npx my-cli --mcp', agents: ['claude-desktop'] })
-
-    const [, args, opts] = vi.mocked(execFile).mock.calls[0]! as unknown as [
-      string,
-      string[],
-      object,
-    ]
-    expect(opts).toEqual({ shell: true })
-    expect(args).toContain('"npx my-cli --mcp"')
-  } finally {
-    Object.defineProperty(process, 'platform', platform)
-  }
 })
 
 test('register writes amp config to existing settings', async () => {
