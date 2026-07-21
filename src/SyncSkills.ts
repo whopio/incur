@@ -29,6 +29,7 @@ export async function sync(
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `incur-skills-${name}-`))
   try {
     const skills: sync.Skill[] = []
+    const generatedDirs = new Map<string, string>()
     for (const file of files) {
       const filePath = file.dir
         ? path.join(tmpDir, file.dir, 'SKILL.md')
@@ -36,7 +37,9 @@ export async function sync(
       await fs.mkdir(path.dirname(filePath), { recursive: true })
       await fs.writeFile(filePath, `${file.content}\n`)
       const meta = parseSkillFrontmatter(file.content)
-      skills.push({ name: meta.name ?? (file.dir || name), description: meta.description })
+      const skillName = meta.name ?? (file.dir || name)
+      skills.push({ name: skillName, description: meta.description })
+      if (file.dir) generatedDirs.set(skillName, file.dir)
     }
 
     // Include additional SKILL.md files matched by glob patterns
@@ -52,8 +55,18 @@ export async function sync(
             const dest = path.join(tmpDir, skillName, 'SKILL.md')
             await fs.mkdir(path.dirname(dest), { recursive: true })
             await fs.writeFile(dest, content)
-            if (!skills.some((s) => s.name === skillName))
-              skills.push({ name: skillName, description: meta.description, external: true })
+            // An included skill overrides a generated one with the same
+            // frontmatter name. Remove the generated copy — otherwise both
+            // land in tmpDir and install order (which differs between node
+            // and bun readdir) decides which one wins.
+            const generatedDir = generatedDirs.get(meta.name ?? skillName)
+            if (generatedDir && generatedDir !== skillName)
+              await fs.rm(path.join(tmpDir, generatedDir), { recursive: true, force: true })
+            const existing = skills.find((s) => s.name === skillName)
+            if (existing) {
+              existing.description = meta.description
+              existing.external = true
+            } else skills.push({ name: skillName, description: meta.description, external: true })
           } catch {}
         }
       }
