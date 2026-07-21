@@ -1,54 +1,66 @@
-import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
+import {
+  type AgentType,
+  agents as agentRegistry,
+  detectGlobalAgents,
+  detectProjectAgents,
+  getAgentTypes,
+  upsertServer,
+} from 'add-mcp'
+
 import { detectRunner } from './internal/pm.js'
 
-/** Registers the CLI as an MCP server via `npx add-mcp` and direct config writes for unsupported agents. */
+/**
+ * Registers the CLI as an MCP server. Agent config writes run in-process through
+ * add-mcp's library rather than a spawned `npx add-mcp`, so a standalone binary
+ * (which bundles add-mcp at build time) registers without Node or npx installed.
+ * Amp is written directly since add-mcp does not support it.
+ */
 export async function register(
   name: string,
   options: register.Options = {},
 ): Promise<register.Result> {
-  const runner = detectRunner()
-  const command = options.command ?? defaultCommand(name, runner)
-  const targetAgents = options.agents ?? []
-  const ampOnly = targetAgents.length === 1 && targetAgents[0] === 'amp'
+  const command = options.command ?? defaultCommand(name, detectRunner())
+  const explicit = (options.agents ?? []).filter(Boolean)
+  const [cmd, ...args] = splitCommand(command)
 
   const agents: string[] = []
 
-  // Run add-mcp for agents it supports (skip if only targeting Amp)
-  if (!ampOnly) {
-    const args = [...addMcpCommandArgs(command), '--name', name, '-y']
-    if (options.global !== false) args.push('-g')
-    for (const agent of targetAgents.filter((a) => a !== 'amp')) args.push('-a', agent)
+  const nonAmp = explicit.filter((a) => a !== 'amp')
+  const ampOnly = explicit.length > 0 && nonAmp.length === 0
 
-    const [cmd, ...prefix] = runner.split(' ')
-    const { stdout } = await exec(cmd!, [...prefix, 'add-mcp', ...args])
-
-    // Extract agent names from add-mcp output (lines like "│ ✓ Claude Code: ~/.claude.json │")
-    agents.push(
-      ...stdout
-        .split('\n')
-        .filter((l) => l.includes('✓') || l.includes('✔'))
-        .map((l) =>
-          l
-            .replace(/[│┃|]/g, '')
-            .replace(/.*[✓✔]\s*/, '')
-            .replace(/:.*/, '')
-            .trim(),
-        )
-        .filter(Boolean),
-    )
+  // Register every add-mcp-supported agent (skip if only targeting Amp).
+  if (!ampOnly && cmd) {
+    const global = options.global !== false
+    for (const agent of await resolveTargets(nonAmp, global)) {
+      const result = upsertServer(agent, name, { command: cmd, args }, { local: !global })
+      if (result.success) agents.push(agentRegistry[agent]?.displayName ?? agent)
+    }
   }
 
-  // Register with Amp directly (add-mcp doesn't support it)
-  if (targetAgents.length === 0 || targetAgents.includes('amp')) {
-    const registered = registerAmp(name, command)
-    if (registered) agents.push('Amp')
+  // Register with Amp directly (add-mcp doesn't support it).
+  if ((explicit.length === 0 || explicit.includes('amp')) && registerAmp(name, command)) {
+    agents.push('Amp')
   }
 
   return { command, agents }
+}
+
+/**
+ * @internal Resolves which agents to register with. An explicit list is honored
+ * as given (filtered to agents add-mcp knows); otherwise every installed agent
+ * is detected, falling back to all known agents when none are detected — matching
+ * add-mcp's own non-interactive (`-y`) behavior.
+ */
+async function resolveTargets(explicit: string[], global: boolean): Promise<AgentType[]> {
+  const known = new Set<string>(getAgentTypes())
+  if (explicit.length > 0) return explicit.filter((a): a is AgentType => known.has(a))
+
+  const detected = global ? await detectGlobalAgents() : detectProjectAgents()
+  return detected.length > 0 ? detected : getAgentTypes()
 }
 
 /** @internal Registers an MCP server in Amp's settings.json. */
@@ -204,31 +216,6 @@ export function detectPackageSpecifier(name: string): string {
   return pkgName
 }
 
-/**
- * @internal Builds the add-mcp arguments for a command string. add-mcp splits
- * command strings on spaces without unquoting, so a quoted binary path ends up
- * with literal quotes in the written config; an unquoted absolute path swallows
- * the flags into the command. Path commands are therefore passed as a bare
- * positional plus repeatable `--args`; runner commands (`npx ...`) are passed
- * as-is since add-mcp parses those correctly.
- */
-function addMcpCommandArgs(command: string): string[] {
-  const [bin, ...binArgs] = splitCommand(command)
-  if (!bin || !looksLikePath(bin)) return [command]
-  return [bin, ...binArgs.flatMap((arg) => ['--args', arg])]
-}
-
-/** @internal Mirrors add-mcp's own path detection. */
-function looksLikePath(input: string): boolean {
-  return (
-    input.startsWith('/') ||
-    input.startsWith('~/') ||
-    input.startsWith('./') ||
-    input.startsWith('../') ||
-    /^[A-Za-z]:[\\/]/.test(input)
-  )
-}
-
 /** Splits a command string into tokens, respecting single and double quotes. */
 function splitCommand(input: string): string[] {
   const tokens: string[] = []
@@ -251,25 +238,4 @@ function splitCommand(input: string): string[] {
   }
   if (current) tokens.push(current)
   return tokens
-}
-
-/**
- * Promisified execFile with stderr in error message. Runs through a shell on
- * Windows: package-manager runners (`npx`, `pnpx`, `bunx`) are `.cmd` shims
- * there, which Node refuses to spawn without one (CVE-2024-27980 hardening).
- * The shell joins args with spaces, so args are quoted first.
- */
-function exec(cmd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
-  const windows = process.platform === 'win32'
-  const finalArgs = windows
-    ? args.map((arg) => (/[\s"]/.test(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg))
-    : args
-  return new Promise((resolve, reject) => {
-    execFile(cmd, finalArgs, { shell: windows }, (error, stdout, stderr) => {
-      if (error) {
-        const msg = stderr?.trim() || stdout?.trim() || error.message
-        reject(new Error(msg))
-      } else resolve({ stdout, stderr })
-    })
-  })
 }
