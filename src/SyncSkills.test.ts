@@ -104,6 +104,49 @@ test('sync results are sorted alphabetically', async () => {
   rmSync(tmp, { recursive: true, force: true })
 })
 
+test('included skill deterministically overrides generated skill with same name', async () => {
+  const tmp = join(tmpdir(), `clac-override-test-${Date.now()}`)
+  mkdirSync(tmp, { recursive: true })
+
+  const cli = Cli.create('test')
+  cli.command('accounts list', { description: 'List accounts', run: () => ({}) })
+
+  const commands = Cli.toCommands.get(cli)!
+  const installDir = join(tmp, 'install')
+  mkdirSync(join(installDir, '.agents', 'skills'), { recursive: true })
+
+  // Shipped override whose frontmatter name collides with the generated
+  // `accounts` group skill (generated as name `test-accounts` in dir `accounts`).
+  mkdirSync(join(installDir, 'test-accounts'), { recursive: true })
+  writeFileSync(
+    join(installDir, 'test-accounts', 'SKILL.md'),
+    [
+      '---',
+      'name: test-accounts',
+      'description: Accounts skill.',
+      '---',
+      '',
+      'Long-form accounts copy.',
+    ].join('\n'),
+  )
+
+  const result = await SyncSkills.sync('test', commands, {
+    global: false,
+    cwd: installDir,
+    include: ['test-accounts'],
+  })
+
+  const installed = readFileSync(
+    join(installDir, '.agents', 'skills', 'test-accounts', 'SKILL.md'),
+    'utf8',
+  )
+  expect(installed).toContain('Long-form accounts copy.')
+  expect(result.skills.filter((s) => s.name === 'test-accounts')).toHaveLength(1)
+  expect(new Set(result.paths).size).toBe(result.paths.length)
+
+  rmSync(tmp, { recursive: true, force: true })
+})
+
 test('writes hash after successful sync', async () => {
   const tmp = join(tmpdir(), `clac-hash-test-${Date.now()}`)
   mkdirSync(tmp, { recursive: true })
