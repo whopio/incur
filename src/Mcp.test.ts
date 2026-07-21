@@ -117,6 +117,22 @@ describe('Mcp', () => {
     expect(res.result.capabilities.tools).toBeDefined()
   })
 
+  test('initialize includes configured server icons', async () => {
+    const icons = [
+      {
+        src: 'https://example.com/icon.png',
+        mimeType: 'image/png',
+        sizes: ['512x512'],
+      },
+    ]
+    const [res] = await mcpSession(
+      createTestCommands(),
+      [{ id: 1, method: 'initialize', params: initParams }],
+      { icons },
+    )
+    expect(res.result.serverInfo).toEqual({ name: 'test-cli', version: '1.0.0', icons })
+  })
+
   test('initialize with 2025-03-26 protocol version', async () => {
     const [res] = await mcpSession(createTestCommands(), [
       {

@@ -244,6 +244,8 @@ export declare namespace create {
             command?: string | undefined;
             /** Instructions describing how to use the server and its features. */
             instructions?: string | undefined;
+            /** Icons shown by MCP clients when presenting the server. */
+            icons?: Mcp.Icon[] | undefined;
             /** Disable HTTP MCP session management. Defaults to `true`. */
             stateless?: boolean | undefined;
             /** Controls how command tools are exposed to MCP clients. */

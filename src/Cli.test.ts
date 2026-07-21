@@ -5674,7 +5674,16 @@ describe('fetch', () => {
     function mcpCli() {
       const cli = Cli.create('test', {
         version: '1.0.0',
-        mcp: { tools: { discovery: 'direct' } },
+        mcp: {
+          icons: [
+            {
+              src: 'https://example.com/icon.png',
+              mimeType: 'image/png',
+              sizes: ['512x512'],
+            },
+          ],
+          tools: { discovery: 'direct' },
+        },
       })
       cli.command('greet', {
         description: 'Greet someone',
@@ -5753,6 +5762,15 @@ describe('fetch', () => {
         {
           "hasTools": true,
           "serverInfo": {
+            "icons": [
+              {
+                "mimeType": "image/png",
+                "sizes": [
+                  "512x512",
+                ],
+                "src": "https://example.com/icon.png",
+              },
+            ],
             "name": "test",
             "version": "1.0.0",
           },
