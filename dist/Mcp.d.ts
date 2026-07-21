@@ -22,10 +22,23 @@ export declare namespace serve {
         version?: string | undefined;
         /** Instructions describing how to use the server and its features. */
         instructions?: string | undefined;
+        /** Icons shown by MCP clients when presenting the server. */
+        icons?: Icon[] | undefined;
         /** Filters which command tools are exposed to MCP clients. */
         tools?: ToolFilter | undefined;
     };
 }
+/** An icon that MCP clients can display for a server, tool, prompt, or resource. */
+export type Icon = {
+    /** A HTTPS or data URI pointing to the image. */
+    src: string;
+    /** The image MIME type. */
+    mimeType?: string | undefined;
+    /** Image dimensions, such as `"48x48"` or `"any"`. */
+    sizes?: string[] | undefined;
+    /** The theme the image is designed for. */
+    theme?: 'light' | 'dark' | undefined;
+};
 /** @internal Executes a tool call and returns a CallToolResult. */
 export declare function callTool(tool: ToolEntry, params: Record<string, unknown>, options?: {
     extra?: {

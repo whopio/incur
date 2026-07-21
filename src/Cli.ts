@@ -258,6 +258,7 @@ export function create(
   const middlewares: MiddlewareHandler[] = []
   const pending: Promise<void>[] = []
   const mcpHandler = createMcpHttpHandler(name, def.version ?? '0.0.0', {
+    icons: def.mcp?.icons,
     stateless: def.mcp?.stateless,
     tools: def.mcp?.tools,
   })
@@ -600,6 +601,8 @@ export declare namespace create {
           command?: string | undefined
           /** Instructions describing how to use the server and its features. */
           instructions?: string | undefined
+          /** Icons shown by MCP clients when presenting the server. */
+          icons?: Mcp.Icon[] | undefined
           /** Disable HTTP MCP session management. Defaults to `true`. */
           stateless?: boolean | undefined
           /** Controls how command tools are exposed to MCP clients. */
@@ -735,6 +738,7 @@ async function serveImpl(
       vars: options.vars,
       version: options.version,
       ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
+      ...(options.mcp?.icons ? { icons: options.mcp.icons } : undefined),
       ...(options.mcp?.tools ? { tools: options.mcp.tools } : undefined),
     })
     return
@@ -1855,7 +1859,11 @@ function createMcpHttpHandler(
       const { fromJsonSchema, McpServer, WebStandardStreamableHTTPServerTransport } =
         await import('@modelcontextprotocol/server')
 
-      const server = new McpServer({ name, version })
+      const server = new McpServer({
+        name,
+        version,
+        ...(options.icons ? { icons: options.icons } : undefined),
+      })
       Mcp.registerTools(server, commands, {
         env: mcpOptions?.env,
         fromJsonSchema,
@@ -1883,6 +1891,8 @@ function createMcpHttpHandler(
 
 declare namespace createMcpHttpHandler {
   type Options = {
+    /** Icons shown by MCP clients when presenting the server. */
+    icons?: Mcp.Icon[] | undefined
     /** Disable HTTP MCP session management. Defaults to `true`. */
     stateless?: boolean | undefined
     /** Filters which command tools are exposed to MCP clients. */
@@ -2445,6 +2455,7 @@ declare namespace serveImpl {
           agents?: string[] | undefined
           command?: string | undefined
           instructions?: string | undefined
+          icons?: Mcp.Icon[] | undefined
           stateless?: boolean | undefined
           tools?: Mcp.ToolFilter | undefined
         }
@@ -2790,6 +2801,7 @@ async function runMcpDoctor(
     vars: options.vars,
     version: options.version,
     ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
+    ...(options.mcp?.icons ? { icons: options.mcp.icons } : undefined),
     tools: { ...options.mcp?.tools, discovery: 'direct' },
   }).catch((error) => {
     serveError = error

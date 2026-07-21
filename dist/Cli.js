@@ -36,6 +36,7 @@ export function create(nameOrDefinition, definition) {
     const middlewares = [];
     const pending = [];
     const mcpHandler = createMcpHttpHandler(name, def.version ?? '0.0.0', {
+        icons: def.mcp?.icons,
         stateless: def.mcp?.stateless,
         tools: def.mcp?.tools,
     });
@@ -310,6 +311,7 @@ async function serveImpl(name, commands, argv, options = {}) {
             vars: options.vars,
             version: options.version,
             ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
+            ...(options.mcp?.icons ? { icons: options.mcp.icons } : undefined),
             ...(options.mcp?.tools ? { tools: options.mcp.tools } : undefined),
         });
         return;
@@ -1288,7 +1290,11 @@ function createMcpHttpHandler(name, version, options = {}) {
             return new Response(null, { status: 405, headers: { Allow: 'POST' } });
         if (!transport) {
             const { fromJsonSchema, McpServer, WebStandardStreamableHTTPServerTransport } = await import('@modelcontextprotocol/server');
-            const server = new McpServer({ name, version });
+            const server = new McpServer({
+                name,
+                version,
+                ...(options.icons ? { icons: options.icons } : undefined),
+            });
             Mcp.registerTools(server, commands, {
                 env: mcpOptions?.env,
                 fromJsonSchema,
@@ -2003,6 +2009,7 @@ async function runMcpDoctor(name, commands, options) {
         vars: options.vars,
         version: options.version,
         ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
+        ...(options.mcp?.icons ? { icons: options.mcp.icons } : undefined),
         tools: { ...options.mcp?.tools, discovery: 'direct' },
     }).catch((error) => {
         serveError = error;

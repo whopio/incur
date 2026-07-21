@@ -10,7 +10,7 @@ export async function serve(name, version, commands, options = {}) {
     const mcp = await import('@modelcontextprotocol/server');
     const { fromJsonSchema, McpServer } = mcp;
     const StdioServerTransport = await importStdioServerTransport(mcp, stdio);
-    const server = new McpServer({ name, version }, options.instructions ? { instructions: options.instructions } : undefined);
+    const server = new McpServer({ name, version, ...(options.icons ? { icons: options.icons } : undefined) }, options.instructions ? { instructions: options.instructions } : undefined);
     registerTools(server, commands, {
         env: options.env,
         fromJsonSchema,
