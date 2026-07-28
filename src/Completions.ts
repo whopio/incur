@@ -2,7 +2,7 @@ import type { z } from 'zod'
 
 import type { GlobalsDescriptor } from './Cli.js'
 import type { Shell } from './internal/command.js'
-import { toKebab } from './internal/helpers.js'
+import { describedAs, toKebab } from './internal/helpers.js'
 
 /** A completion candidate with an optional description. */
 export type Candidate = {
@@ -258,7 +258,7 @@ function unwrap(schema: z.ZodType): z.ZodType {
 /** @internal Extracts a description from a Zod schema's metadata. */
 function descriptionOf(schema: z.ZodType | undefined): string | undefined {
   if (!schema) return undefined
-  return (schema as any).description
+  return describedAs(schema)
 }
 
 // ---------------------------------------------------------------------------

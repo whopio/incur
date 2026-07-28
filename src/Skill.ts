@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { z } from 'zod'
 
+import { describedAs } from './internal/helpers.js'
 import * as Yaml from './internal/yaml.js'
 import * as Schema from './Schema.js'
 
@@ -171,7 +172,7 @@ function renderCommandBody(cli: string, cmd: CommandInfo, level = 1): string {
       const prop = properties?.[key]
       const type = resolveTypeName(prop)
       const req = required.has(key) ? 'yes' : 'no'
-      const desc = field.description ?? ''
+      const desc = describedAs(field) ?? ''
       return `| \`${key}\` | \`${type}\` | ${req} | ${desc} |`
     })
     sections.push(
@@ -190,7 +191,7 @@ function renderCommandBody(cli: string, cmd: CommandInfo, level = 1): string {
       const type = resolveTypeName(prop)
       const def = prop?.default !== undefined ? String(prop.default) : ''
       const req = required.has(key) ? 'yes' : 'no'
-      const desc = field.description ?? ''
+      const desc = describedAs(field) ?? ''
       return `| \`${key}\` | \`${type}\` | ${req} | ${def ? `\`${def}\`` : ''} | ${desc} |`
     })
     sections.push(
@@ -202,17 +203,19 @@ function renderCommandBody(cli: string, cmd: CommandInfo, level = 1): string {
   if (cmd.options) {
     const shape = cmd.options.shape as Record<string, z.ZodType>
     const json = Schema.toJsonSchema(cmd.options)
+    const required = new Set((json.required as string[] | undefined) ?? [])
     const properties = json.properties as Record<string, Record<string, unknown>> | undefined
     const rows = Object.entries(shape).map(([key, field]) => {
       const prop = properties?.[key]
       const type = resolveTypeName(prop)
       const def = prop?.default !== undefined ? String(prop.default) : ''
-      const rawDesc = field.description ?? ''
+      const req = required.has(key) ? 'yes' : 'no'
+      const rawDesc = describedAs(field) ?? ''
       const desc = prop?.deprecated ? `**Deprecated.** ${rawDesc}` : rawDesc
-      return `| \`--${key}\` | \`${type}\` | ${def ? `\`${def}\`` : ''} | ${desc} |`
+      return `| \`--${key}\` | \`${type}\` | ${req} | ${def ? `\`${def}\`` : ''} | ${desc} |`
     })
     sections.push(
-      `${sub} Options\n\n| Flag | Type | Default | Description |\n|------|------|---------|-------------|\n${rows.join('\n')}`,
+      `${sub} Options\n\n| Flag | Type | Required | Default | Description |\n|------|------|----------|---------|-------------|\n${rows.join('\n')}`,
     )
   }
 

@@ -1430,7 +1430,7 @@ describe('--llms', () => {
     const { output } = await serve(cli, ['--llms-full'])
     expect(output).toContain('# my-cli\n\nFetch URLs')
     expect(output).toContain('| `url` | `string` | yes | URL to fetch |')
-    expect(output).toContain('| `--objective` | `string` |  | Narrow content |')
+    expect(output).toContain('| `--objective` | `string` | no |  | Narrow content |')
     expect(output).toContain('# my-cli auth')
     expect(output).not.toContain('# my-cli \n')
   })

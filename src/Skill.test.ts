@@ -48,10 +48,10 @@ test('includes options table', () => {
 
     ## Options
 
-    | Flag | Type | Default | Description |
-    |------|------|---------|-------------|
-    | \`--limit\` | \`number\` | \`30\` | Max items |
-    | \`--verbose\` | \`boolean\` | \`false\` | Show details |"
+    | Flag | Type | Required | Default | Description |
+    |------|------|----------|---------|-------------|
+    | \`--limit\` | \`number\` | yes | \`30\` | Max items |
+    | \`--verbose\` | \`boolean\` | yes | \`false\` | Show details |"
   `)
 })
 

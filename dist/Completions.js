@@ -1,4 +1,4 @@
-import { toKebab } from './internal/helpers.js';
+import { describedAs, toKebab } from './internal/helpers.js';
 /**
  * Generates a shell hook script that registers dynamic completions for the CLI.
  * The hook calls back into the binary with `COMPLETE=<shell>` at every tab press.
@@ -233,7 +233,7 @@ function unwrap(schema) {
 function descriptionOf(schema) {
     if (!schema)
         return undefined;
-    return schema.description;
+    return describedAs(schema);
 }
 // ---------------------------------------------------------------------------
 // Shell registration scripts

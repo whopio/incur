@@ -187,6 +187,89 @@ describe('generateCommands', () => {
     expect(limitSchema.description).toBe('Max results')
   })
 
+  test('optional body properties preserve description', async () => {
+    const bodySpec = {
+      openapi: '3.0.0',
+      info: { title: 'Test API', version: '1.0.0' },
+      paths: {
+        '/items': {
+          post: {
+            operationId: 'createItem',
+            requestBody: {
+              required: true,
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['title'],
+                    properties: {
+                      title: { type: 'string', description: 'The item title' },
+                      note: { type: 'string', description: 'An optional note' },
+                      archived: {
+                        type: ['boolean', 'null'],
+                        description: 'Whether the item is archived',
+                      },
+                      rank: { type: ['number', 'null'], description: 'Sort position' },
+                    },
+                  },
+                },
+              },
+            },
+            responses: { '201': { description: 'Created' } },
+          },
+        },
+      },
+    }
+
+    const commands = await Openapi.generateCommands(bodySpec, app.fetch)
+    const cmd = commands.get('createItem')!
+    if ('_group' in cmd) throw new Error('expected createItem command')
+    const { shape } = cmd.options!
+    expect(shape.title.description).toBe('The item title')
+    expect(shape.note.description).toBe('An optional note')
+    expect(shape.archived.description).toBe('Whether the item is archived')
+    expect(shape.rank.description).toBe('Sort position')
+  })
+
+  test('required body properties are marked required in help', async () => {
+    const bodySpec = {
+      openapi: '3.0.0',
+      info: { title: 'Test API', version: '1.0.0' },
+      paths: {
+        '/items': {
+          post: {
+            operationId: 'createItem',
+            requestBody: {
+              required: true,
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['title'],
+                    properties: {
+                      title: { type: 'string', description: 'The item title' },
+                      note: { type: 'string', description: 'An optional note' },
+                    },
+                  },
+                },
+              },
+            },
+            responses: { '201': { description: 'Created' } },
+          },
+        },
+      },
+    }
+
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: app.fetch,
+      openapi: bodySpec,
+    })
+    const { output } = await serve(cli, ['api', 'createItem', '--help'])
+    const line = (flag: string) => output.split('\n').find((l) => l.includes(flag))!
+    expect(line('--title')).toContain('(required)')
+    expect(line('--note')).not.toContain('(required)')
+  })
+
   test('compact strips examples and oversized patterns', async () => {
     const longPattern = `^${'(?:x|y)'.repeat(60)}$`
     const compactSpec = {
