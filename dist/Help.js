@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { builtinCommands } from './internal/command.js';
-import { toKebab } from './internal/helpers.js';
+import { describedAs, toKebab } from './internal/helpers.js';
 import { defaultEnvSource } from './Parser.js';
 /** Formats help text for a router CLI or command group. */
 export function formatRoot(name, options = {}) {
@@ -90,9 +90,12 @@ export function formatCommand(name, options = {}) {
             for (const entry of entries) {
                 const padding = ' '.repeat(maxLen - entry.flag.length);
                 const prefix = entry.deprecated ? '[deprecated] ' : '';
-                const desc = entry.defaultValue !== undefined
-                    ? `${prefix}${entry.description} (default: ${entry.defaultValue})`
-                    : `${prefix}${entry.description}`;
+                const suffix = entry.defaultValue !== undefined
+                    ? `(default: ${entry.defaultValue})`
+                    : entry.required
+                        ? '(required)'
+                        : '';
+                const desc = [`${prefix}${entry.description}`.trim(), suffix].filter(Boolean).join(' ');
                 lines.push(`  ${entry.flag}${padding}  ${desc}`);
             }
         }
@@ -170,7 +173,7 @@ function buildSynopsis(name, args) {
 function argsEntries(schema) {
     const entries = [];
     for (const [key, field] of Object.entries(schema.shape))
-        entries.push({ name: key, description: field.description ?? '' });
+        entries.push({ name: key, description: describedAs(field) ?? '' });
     return entries;
 }
 /** Extracts env var entries from a Zod object schema. */
@@ -178,7 +181,7 @@ function envEntries(schema) {
     const entries = [];
     for (const [key, field] of Object.entries(schema.shape)) {
         const defaultValue = extractDefault(field);
-        entries.push({ name: key, description: field.description ?? '', defaultValue });
+        entries.push({ name: key, description: describedAs(field) ?? '', defaultValue });
     }
     return entries;
 }
@@ -195,7 +198,14 @@ function optionEntries(schema, alias) {
         if (type === 'boolean' && defaultValue === false)
             defaultValue = undefined;
         const deprecated = extractDeprecated(field);
-        entries.push({ flag, description: field.description ?? '', defaultValue, deprecated });
+        const required = field._zod.optin !== 'optional';
+        entries.push({
+            flag,
+            description: describedAs(field) ?? '',
+            defaultValue,
+            deprecated,
+            required,
+        });
     }
     return entries;
 }

@@ -430,6 +430,7 @@ export async function generateCommands(
     for (const [key, schema] of Object.entries(bodyProps)) {
       let zodType = toZod(schema)
       if (!bodyRequired.has(key)) zodType = zodType.optional()
+      if (typeof schema.description === 'string') zodType = zodType.describe(schema.description)
       optShape[key] = coerceIfNeeded(zodType)
       usedOptionNames.add(key)
     }

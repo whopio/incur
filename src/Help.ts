@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 import type { GlobalsDescriptor } from './Cli.js'
 import { builtinCommands } from './internal/command.js'
-import { toKebab } from './internal/helpers.js'
+import { describedAs, toKebab } from './internal/helpers.js'
 import { defaultEnvSource } from './Parser.js'
 
 /** Formats help text for a router CLI or command group. */
@@ -176,10 +176,13 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
       for (const entry of entries) {
         const padding = ' '.repeat(maxLen - entry.flag.length)
         const prefix = entry.deprecated ? '[deprecated] ' : ''
-        const desc =
+        const suffix =
           entry.defaultValue !== undefined
-            ? `${prefix}${entry.description} (default: ${entry.defaultValue})`
-            : `${prefix}${entry.description}`
+            ? `(default: ${entry.defaultValue})`
+            : entry.required
+              ? '(required)'
+              : ''
+        const desc = [`${prefix}${entry.description}`.trim(), suffix].filter(Boolean).join(' ')
         lines.push(`  ${entry.flag}${padding}  ${desc}`)
       }
     }
@@ -260,7 +263,7 @@ function buildSynopsis(name: string, args?: z.ZodObject<any>): string {
 function argsEntries(schema: z.ZodObject<any>) {
   const entries: { name: string; description: string }[] = []
   for (const [key, field] of Object.entries(schema.shape))
-    entries.push({ name: key, description: (field as any).description ?? '' })
+    entries.push({ name: key, description: describedAs(field) ?? '' })
   return entries
 }
 
@@ -269,7 +272,7 @@ function envEntries(schema: z.ZodObject<any>) {
   const entries: { name: string; description: string; defaultValue?: unknown }[] = []
   for (const [key, field] of Object.entries(schema.shape)) {
     const defaultValue = extractDefault(field)
-    entries.push({ name: key, description: (field as any).description ?? '', defaultValue })
+    entries.push({ name: key, description: describedAs(field) ?? '', defaultValue })
   }
   return entries
 }
@@ -284,6 +287,7 @@ function optionEntries(
     description: string
     defaultValue?: unknown
     deprecated?: boolean | undefined
+    required: boolean
   }[] = []
   for (const [key, field] of Object.entries(schema.shape)) {
     const type = resolveTypeName(field)
@@ -294,7 +298,14 @@ function optionEntries(
     let defaultValue = extractDefault(field)
     if (type === 'boolean' && defaultValue === false) defaultValue = undefined
     const deprecated = extractDeprecated(field)
-    entries.push({ flag, description: (field as any).description ?? '', defaultValue, deprecated })
+    const required = (field as z.ZodType)._zod.optin !== 'optional'
+    entries.push({
+      flag,
+      description: describedAs(field) ?? '',
+      defaultValue,
+      deprecated,
+      required,
+    })
   }
   return entries
 }

@@ -106,7 +106,25 @@ describe('remote MCP command sources', () => {
     const result = await serve(cli, ['docs', 'search', '--help'])
 
     expect(result.output).toMatchInlineSnapshot(`
-      "local docs search — Search docs\n\nUsage: local docs search [options]\n\nOptions:\n  --query <string>  Search query\n  --limit <number>  Result limit\n\nGlobal Options:\n  --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])\n  --format <toon|json|yaml|md|jsonl>  Output format\n  --full-output                       Show full output envelope\n  --help                              Show help\n  --llms, --llms-full                 Print LLM-readable manifest\n  --schema                            Show JSON Schema for command\n  --token-count                       Print token count of output (instead of output)\n  --token-limit <n>                   Limit output to n tokens\n  --token-offset <n>                  Skip first n tokens of output\n"
+      "local docs search — Search docs
+
+      Usage: local docs search [options]
+
+      Options:
+        --query <string>  Search query (required)
+        --limit <number>  Result limit
+
+      Global Options:
+        --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+        --format <toon|json|yaml|md|jsonl>  Output format
+        --full-output                       Show full output envelope
+        --help                              Show help
+        --llms, --llms-full                 Print LLM-readable manifest
+        --schema                            Show JSON Schema for command
+        --token-count                       Print token count of output (instead of output)
+        --token-limit <n>                   Limit output to n tokens
+        --token-offset <n>                  Skip first n tokens of output
+      "
     `)
   })
 

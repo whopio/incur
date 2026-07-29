@@ -57,3 +57,18 @@ export function suggest(input: string, candidates: Iterable<string>): string | u
   }
   return best
 }
+
+/**
+ * Reads a schema's description, falling back to the type it wraps.
+ *
+ * `.describe()` before `.optional()` leaves the description on the inner schema, so reading only
+ * the outer wrapper silently drops help text.
+ */
+export function describedAs(schema: unknown): string | undefined {
+  let current = schema as any
+  while (current) {
+    if (typeof current.description === 'string') return current.description
+    current = current._zod?.def?.innerType
+  }
+  return undefined
+}

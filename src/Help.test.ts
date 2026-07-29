@@ -160,6 +160,44 @@ describe('formatCommand', () => {
     expect(line).toBe('  --dry-run  Preview without submitting.')
   })
 
+  test('marks required options, leaving optional and defaulted ones unmarked', () => {
+    const result = Help.formatCommand('tool deploy', {
+      options: z.object({
+        title: z.string().describe('Release title'),
+        note: z.string().optional().describe('Release note'),
+        retries: z.number().default(3).describe('Retry attempts'),
+        force: z.boolean().default(false).describe('Skip confirmation'),
+      }),
+    })
+
+    const line = (flag: string) => result.split('\n').find((l) => l.includes(flag))!
+    expect(line('--title')).toContain('(required)')
+    expect(line('--note')).not.toContain('(required)')
+    expect(line('--retries')).not.toContain('(required)')
+    expect(line('--retries')).toContain('(default: 3)')
+    expect(line('--force')).not.toContain('(required)')
+  })
+
+  test('renders descriptions attached before optional/default wrappers', () => {
+    const result = Help.formatCommand('tool deploy', {
+      args: z.object({ target: z.string().describe('Deploy target').optional() }),
+      options: z.object({
+        region: z.string().describe('Region to deploy to').optional(),
+        retries: z.number().describe('Retry attempts').default(3),
+      }),
+    })
+
+    expect(result.split('\n').find((line) => line.startsWith('  target'))).toContain(
+      'Deploy target',
+    )
+    expect(result.split('\n').find((line) => line.includes('--region'))).toContain(
+      'Region to deploy to',
+    )
+    expect(result.split('\n').find((line) => line.includes('--retries'))).toContain(
+      'Retry attempts',
+    )
+  })
+
   test('omits value placeholders for aliased boolean flag options', () => {
     const result = Help.formatCommand('tool deploy', {
       options: z.object({
@@ -242,7 +280,7 @@ describe('formatCommand', () => {
       Usage: tool deploy [options]
 
       Options:
-        --env <staging|production>  Target environment
+        --env <staging|production>  Target environment (required)
 
       Global Options:
         --config <path>                     Load JSON option defaults from a file

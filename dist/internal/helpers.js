@@ -51,4 +51,19 @@ export function suggest(input, candidates) {
     }
     return best;
 }
+/**
+ * Reads a schema's description, falling back to the type it wraps.
+ *
+ * `.describe()` before `.optional()` leaves the description on the inner schema, so reading only
+ * the outer wrapper silently drops help text.
+ */
+export function describedAs(schema) {
+    let current = schema;
+    while (current) {
+        if (typeof current.description === 'string')
+            return current.description;
+        current = current._zod?.def?.innerType;
+    }
+    return undefined;
+}
 //# sourceMappingURL=helpers.js.map
