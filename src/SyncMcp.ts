@@ -1,7 +1,3 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
-
 import {
   type AgentType,
   agents as agentRegistry,
@@ -10,6 +6,9 @@ import {
   getAgentTypes,
   upsertServer,
 } from 'add-mcp'
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 
 import { detectRunner } from './internal/pm.js'
 
@@ -23,7 +22,7 @@ export async function register(
   name: string,
   options: register.Options = {},
 ): Promise<register.Result> {
-  const command = options.command ?? defaultCommand(name, detectRunner())
+  const command = options.command ?? defaultCommand(options.cli ?? name, detectRunner())
   const explicit = (options.agents ?? []).filter(Boolean)
   const [cmd, ...args] = splitCommand(command)
 
@@ -95,6 +94,8 @@ export declare namespace register {
   type Options = {
     /** Target specific agents (e.g. `'claude-code'`, `'cursor'`). */
     agents?: string[] | undefined
+    /** CLI name used to derive the default command. Defaults to the MCP server name. */
+    cli?: string | undefined
     /** Override the command agents will run. Defaults to `<runner> <name> --mcp`. */
     command?: string | undefined
     /** Install globally. Defaults to `true`. */
@@ -141,8 +142,7 @@ function shouldUseBareCommand(name: string): boolean {
   const info = nodeModulesInfo()
   if (info)
     return (
-      !info.entry.startsWith('.bin/') &&
-      !packageDependsOn(info.root, entryPackageName() ?? name)
+      !info.entry.startsWith('.bin/') && !packageDependsOn(info.root, entryPackageName() ?? name)
     )
 
   const file = bin.replace(/\\/g, '/').split('/').pop()

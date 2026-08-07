@@ -26,7 +26,11 @@ function buildSignature(cli, cmd) {
     const shape = cmd.args.shape;
     const json = Schema.toJsonSchema(cmd.args);
     const required = new Set(json.required ?? []);
-    const argNames = Object.keys(shape).map((k) => (required.has(k) ? `<${k}>` : `[${k}]`));
+    const properties = json.properties;
+    const argNames = Object.keys(shape).map((k) => {
+        const label = properties?.[k]?.type === 'array' ? `${k}...` : k;
+        return required.has(k) ? `<${label}>` : `[${label}]`;
+    });
     return `${base} ${argNames.join(' ')}`;
 }
 /** Generates a Markdown skill file from a CLI name and collected command data. */

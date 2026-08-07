@@ -10,6 +10,8 @@ export declare namespace register {
     type Options = {
         /** Target specific agents (e.g. `'claude-code'`, `'cursor'`). */
         agents?: string[] | undefined;
+        /** CLI name used to derive the default command. Defaults to the MCP server name. */
+        cli?: string | undefined;
         /** Override the command agents will run. Defaults to `<runner> <name> --mcp`. */
         command?: string | undefined;
         /** Install globally. Defaults to `true`. */

@@ -14,7 +14,7 @@ export type Cli<commands extends CommandsMap = {}, vars extends z.ZodObject<any>
     /** Registers a root command or mounts a sub-CLI as a command group. */
     command: {
         /** Registers a command. Returns the CLI instance for chaining. */
-        <const name extends string, const args extends z.ZodObject<any> | undefined = undefined, const cmdEnv extends z.ZodObject<any> | undefined = undefined, const options extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | undefined = undefined>(name: name, definition: CommandDefinition<args, cmdEnv, options, output, vars, env>): Cli<commands & {
+        <const name extends string, const args extends z.ZodObject<any> | undefined = undefined, const cmdEnv extends z.ZodObject<any> | undefined = undefined, const options extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | undefined = undefined>(name: name, definition: CommandDefinition<args, cmdEnv, options, output, vars, env, globals>): Cli<commands & {
             [key in name]: {
                 args: InferOutput<args>;
                 options: InferOutput<options>;
@@ -226,6 +226,8 @@ export declare namespace create {
             format: Formatter.Format;
             /** Whether the user explicitly passed `--format` or `--json`. */
             formatExplicit: boolean;
+            /** Parsed global options from the CLI-level globals schema. */
+            globals: InferOutput<globals>;
             /** The CLI name. */
             name: string;
             /** Return a success result with optional metadata (e.g. CTAs). */
@@ -246,13 +248,19 @@ export declare namespace create {
             instructions?: string | undefined;
             /** Icons shown by MCP clients when presenting the server. */
             icons?: Mcp.Icon[] | undefined;
+            /** MCP server and registration name. Defaults to the CLI name. */
+            name?: string | undefined;
             /** Disable HTTP MCP session management. Defaults to `true`. */
             stateless?: boolean | undefined;
+            /** Human-readable MCP server title. */
+            title?: string | undefined;
             /** Controls how command tools are exposed to MCP clients. */
             tools?: Mcp.ToolFilter | undefined;
         } | undefined;
         /** Options for the built-in `skills add` command. */
         sync?: {
+            /** Text printed verbatim after the synced skills, before the suggestions. For whatever installing skills cannot do itself, such as authorizing an app. */
+            body?: string | undefined;
             /** Working directory for resolving `include` globs. Pass `import.meta.dirname` when running from a bin entry. Defaults to `process.cwd()`. */
             cwd?: string | undefined;
             /** Default grouping depth for skill files. Overridden by `--depth`. Defaults to `1`. */
@@ -262,8 +270,43 @@ export declare namespace create {
             /** Example prompts shown after sync to help users get started. */
             suggestions?: string[] | undefined;
         } | undefined;
+        /** Configures updates. Package installs are inferred; standalone binaries can provide custom callbacks. Pass `false` to disable automatic checks. */
+        update?: false | UpdateOptions | undefined;
         /** The CLI version string. */
         version?: string | undefined;
+    };
+    /** Options for update checks and installation. */
+    type UpdateOptions = {
+        /** Custom latest-version checker for non-package distributions. */
+        check?: ((context: UpdateCheckContext) => Promise<string | undefined> | string | undefined) | undefined;
+        /** Whether installation finishes after the updating process exits. */
+        deferred?: boolean | undefined;
+        /** Custom installer for non-package distributions. */
+        install?: ((context: UpdateInstallContext) => Promise<void> | void) | undefined;
+        /** Minimum time between update checks in milliseconds. Defaults to one day. */
+        interval?: number | undefined;
+        /** Registry package name. Defaults to the package containing the executing binary. */
+        package?: string | undefined;
+    };
+    /** Context passed to a custom update checker. */
+    type UpdateCheckContext = {
+        /** Current CLI version. */
+        current: string;
+        /** CLI name. */
+        name: string;
+        /** Registry package name when one is configured or inferred. */
+        package?: string | undefined;
+    };
+    /** Context passed to a custom update installer. */
+    type UpdateInstallContext = {
+        /** Current CLI version when available. */
+        current?: string | undefined;
+        /** Latest cached version when available. */
+        latest?: string | undefined;
+        /** CLI name. */
+        name: string;
+        /** Registry package name when one is configured or inferred. */
+        package?: string | undefined;
     };
 }
 export declare namespace serve {
@@ -316,7 +359,7 @@ type InternalAlias = {
 /** @internal Maps CLI instances to their command maps. */
 export declare const toCommands: WeakMap<Cli<{}, undefined, undefined, undefined>, Map<string, CommandEntry>>;
 /** @internal Maps root CLI instances to their command definitions. */
-export declare const toRootDefinition: WeakMap<Root<_args, _options>, CommandDefinition<any, any, any, undefined, undefined, undefined>>;
+export declare const toRootDefinition: WeakMap<Root<_args, _options>, CommandDefinition<any, any, any, undefined, undefined, undefined, undefined>>;
 /** @internal Maps CLI instances to their root options schema. */
 export declare const toRootOptions: WeakMap<Cli<{}, undefined, undefined, undefined>, z.ZodObject<any, z.core.$strip>>;
 /** @internal Maps CLI instances to whether config file loading is enabled. */
@@ -373,7 +416,7 @@ type InferReturn<output extends z.ZodType | undefined> = output extends z.ZodTyp
 /** @internal Inferred vars type from a Zod schema, or `{}` when no schema is provided. */
 type InferVars<vars extends z.ZodObject<any> | undefined> = vars extends z.ZodObject<any> ? z.output<vars> : {};
 /** @internal Defines a command's schema, handler, and metadata. */
-type CommandDefinition<args extends z.ZodObject<any> | undefined = undefined, env extends z.ZodObject<any> | undefined = undefined, options extends z.ZodObject<any> | undefined = undefined, output extends z.ZodType | undefined = undefined, vars extends z.ZodObject<any> | undefined = undefined, cliEnv extends z.ZodObject<any> | undefined = undefined> = CommandMeta<options> & {
+type CommandDefinition<args extends z.ZodObject<any> | undefined = undefined, env extends z.ZodObject<any> | undefined = undefined, options extends z.ZodObject<any> | undefined = undefined, output extends z.ZodType | undefined = undefined, vars extends z.ZodObject<any> | undefined = undefined, cliEnv extends z.ZodObject<any> | undefined = undefined, globals extends z.ZodObject<any> | undefined = undefined> = CommandMeta<options> & {
     /** Alternative names for this command (e.g. `['extensions', 'ext']` for an `extension` command). */
     aliases?: string[] | undefined;
     /** Zod schema for positional arguments. */
@@ -413,7 +456,7 @@ type CommandDefinition<args extends z.ZodObject<any> | undefined = undefined, en
      */
     outputPolicy?: OutputPolicy | undefined;
     /** Middleware that runs only for this command, after root and group middleware. */
-    middleware?: MiddlewareHandler<vars, cliEnv>[] | undefined;
+    middleware?: MiddlewareHandler<vars, cliEnv, globals>[] | undefined;
     /** Alternative usage patterns shown in help output. */
     usage?: Usage<args, options>[] | undefined;
     /** The command handler. Return a value for single-return, or use `async *run` to stream chunks. */
@@ -438,6 +481,8 @@ type CommandDefinition<args extends z.ZodObject<any> | undefined = undefined, en
         format: Formatter.Format;
         /** Whether the user explicitly passed `--format` or `--json`. */
         formatExplicit: boolean;
+        /** Parsed global options from the CLI-level globals schema. */
+        globals: InferOutput<globals>;
         /** The CLI name. */
         name: string;
         /** Return a success result with optional metadata (e.g. CTAs). */

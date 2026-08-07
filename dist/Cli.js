@@ -3,6 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { estimateTokenCount, sliceByTokens } from 'tokenx';
+import * as Binary from './Binary.js';
 import * as Completions from './Completions.js';
 import { IncurError, ParseError, ValidationError } from './Errors.js';
 import * as Fetch from './Fetch.js';
@@ -15,6 +16,7 @@ import { formatCtaBlock } from './internal/cta.js';
 import { isRecord, suggest, toKebab } from './internal/helpers.js';
 import * as Json from './internal/json.js';
 import { detectRunner } from './internal/pm.js';
+import * as Update from './internal/update.js';
 import * as Yaml from './internal/yaml.js';
 import * as Mcp from './Mcp.js';
 import * as McpSource from './McpSource.js';
@@ -28,6 +30,7 @@ const destructiveCommandHint = 'Confirm with the user before executing this dest
 export function create(nameOrDefinition, definition) {
     const name = typeof nameOrDefinition === 'string' ? nameOrDefinition : nameOrDefinition.name;
     const def = typeof nameOrDefinition === 'string' ? (definition ?? {}) : nameOrDefinition;
+    const version = def.version ?? Binary.version;
     const rootDef = 'run' in def ? def : undefined;
     const rootFetchSource = 'fetch' in def && def.fetch !== undefined ? def.fetch : undefined;
     const rootFetch = rootFetchSource === undefined ? undefined : resolveFetch(rootFetchSource);
@@ -35,9 +38,11 @@ export function create(nameOrDefinition, definition) {
     const commands = new Map();
     const middlewares = [];
     const pending = [];
-    const mcpHandler = createMcpHttpHandler(name, def.version ?? '0.0.0', {
+    const mcpHandler = createMcpHttpHandler(def.mcp?.name ?? name, version ?? '0.0.0', {
         icons: def.mcp?.icons,
+        instructions: def.mcp?.instructions,
         stateless: def.mcp?.stateless,
+        title: def.mcp?.title,
         tools: def.mcp?.tools,
     });
     if (def.openapi && rootFetch) {
@@ -150,10 +155,12 @@ export function create(nameOrDefinition, definition) {
                 name,
                 rootCommand: rootDef,
                 vars: def.vars,
-                version: def.version,
+                version,
             });
         },
         async serve(argv = process.argv.slice(2), serveOptions = {}) {
+            if (await Binary.handleArgv(argv))
+                return;
             if (pending.length > 0)
                 await Promise.all(pending);
             const globalsDesc = toGlobals.get(cli);
@@ -173,8 +180,9 @@ export function create(nameOrDefinition, definition) {
                 rootCommand: rootDef,
                 rootFetch,
                 sync: def.sync,
+                update: def.update,
                 vars: def.vars,
-                version: def.version,
+                version,
             });
         },
         use(handler) {
@@ -202,6 +210,9 @@ export function create(nameOrDefinition, definition) {
             'llmsFull',
             'mcp',
             'help',
+            'incurBinaryApply',
+            'incurUpdateCheck',
+            'update',
             'version',
             'schema',
             'filterOutput',
@@ -272,8 +283,13 @@ async function serveImpl(name, commands, argv, options = {}) {
         exit(1);
         return;
     }
-    const { fullOutput, format: formatFlag, formatExplicit, filterOutput, tokenLimit, tokenOffset, tokenCount, llms, llmsFull, mcp: mcpFlag, help, version, schema, configPath, configDisabled, rest, } = builtinFlags;
+    const { fullOutput, format: formatFlag, formatExplicit, filterOutput, tokenLimit, tokenOffset, tokenCount, llms, llmsFull, mcp: mcpFlag, help, update, updateCheck, version, schema, configPath, configDisabled, rest, } = builtinFlags;
     human = tty && !formatExplicit;
+    const updateOptions = {
+        ...(typeof options.update === 'object' ? options.update : undefined),
+        binary: Binary.target !== undefined,
+        version: options.version,
+    };
     let globals = {};
     let filtered = rest;
     function parseGlobalOptions(validate) {
@@ -303,15 +319,54 @@ async function serveImpl(name, commands, argv, options = {}) {
     // Pre-load yaml for the sync formatting paths below (yaml is loaded lazily -- see internal/yaml.ts).
     if (formatFlag === 'yaml')
         await Yaml.load();
+    if (updateCheck) {
+        if (options.update !== false)
+            try {
+                await Update.refresh(name, updateOptions);
+            }
+            catch { }
+        return;
+    }
+    // --help takes precedence over --update.
+    if (update && !help) {
+        try {
+            const result = await Update.install(name, updateOptions);
+            if (human) {
+                const lines = [
+                    result.deferred ? `✓ Update staged for ${result.name}` : `✓ Updated ${result.name}`,
+                ];
+                if (result.command)
+                    lines.push(`  ${result.command}`);
+                if (result.deferred)
+                    lines.push('  Installation will finish after this process exits.');
+                writeln(lines.join('\n'));
+            }
+            else
+                writeln(Formatter.format(result, formatFlag));
+        }
+        catch (error) {
+            const output = {
+                code: 'UPDATE_FAILED',
+                message: error instanceof Error ? error.message : String(error),
+            };
+            if (human)
+                writeln(formatHumanError(output));
+            else
+                writeln(Formatter.format(output, formatFlag));
+            exit(1);
+        }
+        return;
+    }
     // --mcp: start as MCP stdio server
     if (mcpFlag) {
-        await Mcp.serve(name, options.version ?? '0.0.0', commands, {
+        await Mcp.serve(options.mcp?.name ?? name, options.version ?? '0.0.0', commands, {
             middlewares: options.middlewares,
             env: options.envSchema,
             vars: options.vars,
             version: options.version,
             ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
             ...(options.mcp?.icons ? { icons: options.mcp.icons } : undefined),
+            ...(options.mcp?.title ? { title: options.mcp.title } : undefined),
             ...(options.mcp?.tools ? { tools: options.mcp.tools } : undefined),
         });
         return;
@@ -362,7 +417,7 @@ async function serveImpl(name, commands, argv, options = {}) {
     }
     // Skills staleness check (skip for built-in commands)
     let skillsCta;
-    if (!llms && !llmsFull && !schema && !help && !version) {
+    if (!llms && !llmsFull && !schema && !help && !update && !updateCheck && !version) {
         const isSkillsAdd = builtinIdx(filtered, name, 'skills') !== -1;
         const isMcpAdd = builtinIdx(filtered, name, 'mcp') !== -1;
         if (!isSkillsAdd && !isMcpAdd) {
@@ -568,6 +623,12 @@ async function serveImpl(name, commands, argv, options = {}) {
             }
             lines.push('');
             lines.push(`${result.skills.length} skill${result.skills.length === 1 ? '' : 's'} synced`);
+            // Before the suggestions: whatever is left to do is what makes the suggestions work.
+            const body = options.sync?.body;
+            if (body) {
+                lines.push('');
+                lines.push(body);
+            }
             const suggestions = options.sync?.suggestions;
             if (suggestions && suggestions.length > 0) {
                 lines.push('');
@@ -580,6 +641,8 @@ async function serveImpl(name, commands, argv, options = {}) {
             writeln(lines.join('\n'));
             if (fullOutput || formatExplicit) {
                 const output = { skills: result.paths };
+                if (body)
+                    output.body = body;
                 if (fullOutput && result.agents.length > 0)
                     output.agents = result.agents;
                 writeln(Formatter.format(output, formatExplicit ? formatFlag : 'toon'));
@@ -648,19 +711,21 @@ async function serveImpl(name, commands, argv, options = {}) {
                 agents.push(rest[++i]);
         }
         try {
+            const mcpName = options.mcp?.name ?? name;
             stdout('Registering MCP server...');
-            const result = await SyncMcp.register(name, {
+            const result = await SyncMcp.register(mcpName, {
+                ...(mcpName === name ? undefined : { cli: name }),
                 command,
                 global,
                 agents,
             });
             stdout('\r\x1b[K');
             const lines = [];
-            lines.push(`✓ Registered ${name} as MCP server`);
+            lines.push(`✓ Registered ${mcpName} as MCP server`);
             if (result.agents.length > 0)
                 lines.push(`  Agents: ${result.agents.join(', ')}`);
             lines.push('');
-            lines.push(`Agents can now use ${name} tools.`);
+            lines.push(`Agents can now use ${mcpName} tools.`);
             const suggestions = options.sync?.suggestions;
             if (suggestions && suggestions.length > 0) {
                 lines.push('');
@@ -670,7 +735,7 @@ async function serveImpl(name, commands, argv, options = {}) {
             }
             writeln(lines.join('\n'));
             if (fullOutput || formatExplicit)
-                writeln(Formatter.format({ name, command: result.command, agents: result.agents }, formatExplicit ? formatFlag : 'toon'));
+                writeln(Formatter.format({ name: mcpName, command: result.command, agents: result.agents }, formatExplicit ? formatFlag : 'toon'));
         }
         catch (err) {
             writeln(Formatter.format({ code: 'MCP_ADD_FAILED', message: err instanceof Error ? err.message : String(err) }, formatExplicit ? formatFlag : 'toon'));
@@ -678,7 +743,7 @@ async function serveImpl(name, commands, argv, options = {}) {
         }
         return;
     }
-    // --help takes precedence over --version
+    // --help takes precedence over --version.
     if (version && !help && options.version) {
         writeln(options.version);
         return;
@@ -874,6 +939,21 @@ async function serveImpl(name, commands, argv, options = {}) {
         }));
         return;
     }
+    let updateCta;
+    if (human && options.update !== false) {
+        const update = Update.check(name, updateOptions);
+        if (update)
+            updateCta = {
+                description: `Update available for ${update.name}:`,
+                commands: [
+                    {
+                        command: `${displayName} --update`,
+                        description: `upgrade from ${update.current} to ${update.latest}`,
+                    },
+                ],
+            };
+    }
+    const noticeCta = mergeFormattedCtas(skillsCta, updateCta);
     const start = performance.now();
     // Resolve effective format: explicit --format/--json → command default → CLI default → toon
     const resolvedFormat = 'command' in resolved && resolved.command.format;
@@ -928,7 +1008,7 @@ async function serveImpl(name, commands, argv, options = {}) {
     function write(output) {
         if (filterPaths && output.ok && output.data != null)
             output = { ...output, data: Filter.apply(output.data, filterPaths) };
-        if (skillsCta) {
+        if (noticeCta) {
             const existing = output.meta.cta;
             output = {
                 ...output,
@@ -937,9 +1017,9 @@ async function serveImpl(name, commands, argv, options = {}) {
                     cta: existing
                         ? {
                             description: existing.description,
-                            commands: [...existing.commands, ...skillsCta.commands],
+                            commands: [...existing.commands, ...noticeCta.commands],
                         }
-                        : skillsCta,
+                        : noticeCta,
                 },
             };
         }
@@ -1020,8 +1100,8 @@ async function serveImpl(name, commands, argv, options = {}) {
         };
         if (human && !fullOutput) {
             writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }));
-            const mergedCta = skillsCta
-                ? { ...cta, commands: [...cta.commands, ...skillsCta.commands] }
+            const mergedCta = noticeCta
+                ? { ...cta, commands: [...cta.commands, ...noticeCta.commands] }
                 : cta;
             writeln(formatHumanCta(mergedCta));
             exit(1);
@@ -1283,39 +1363,78 @@ async function serveImpl(name, commands, argv, options = {}) {
 }
 /** @internal Creates a lazy MCP HTTP handler scoped to a CLI instance. */
 function createMcpHttpHandler(name, version, options = {}) {
-    let transport;
+    let session;
+    async function createServer(commands, mcpOptions, stateless) {
+        const { fromJsonSchema, McpServer, WebStandardStreamableHTTPServerTransport } = await import('@modelcontextprotocol/server');
+        const server = new McpServer({
+            name,
+            ...(options.icons ? { icons: options.icons } : undefined),
+            ...(options.title ? { title: options.title } : undefined),
+            version,
+        }, options.instructions ? { instructions: options.instructions } : undefined);
+        Mcp.registerTools(server, commands, {
+            env: mcpOptions?.env,
+            fromJsonSchema,
+            middlewares: mcpOptions?.middlewares,
+            name,
+            request: (extra) => extra?.http?.req,
+            sendNotification: (notification) => server.server.notification(notification),
+            tools: options.tools,
+            vars: mcpOptions?.vars,
+            version,
+        });
+        const transport = new WebStandardStreamableHTTPServerTransport(stateless
+            ? { enableJsonResponse: true }
+            : {
+                sessionIdGenerator: () => crypto.randomUUID(),
+                enableJsonResponse: true,
+            });
+        await server.connect(transport);
+        return { server, transport };
+    }
     return async (req, commands, mcpOptions) => {
         const stateless = options.stateless ?? true;
         if (stateless && req.method !== 'POST')
             return new Response(null, { status: 405, headers: { Allow: 'POST' } });
-        if (!transport) {
-            const { fromJsonSchema, McpServer, WebStandardStreamableHTTPServerTransport } = await import('@modelcontextprotocol/server');
-            const server = new McpServer({
-                name,
-                version,
-                ...(options.icons ? { icons: options.icons } : undefined),
+        if (!stateless) {
+            session ??= createServer(commands, mcpOptions, false).catch((error) => {
+                session = undefined;
+                throw error;
             });
-            Mcp.registerTools(server, commands, {
-                env: mcpOptions?.env,
-                fromJsonSchema,
-                middlewares: mcpOptions?.middlewares,
-                name,
-                request: (extra) => extra?.http?.req,
-                sendNotification: (notification) => server.server.notification(notification),
-                tools: options.tools,
-                vars: mcpOptions?.vars,
-                version,
-            });
-            const transportOptions = stateless
-                ? { enableJsonResponse: true }
-                : {
-                    sessionIdGenerator: () => crypto.randomUUID(),
-                    enableJsonResponse: true,
-                };
-            transport = new WebStandardStreamableHTTPServerTransport(transportOptions);
-            await server.connect(transport);
+            return (await session).transport.handleRequest(req);
         }
-        return transport.handleRequest(req);
+        const abortReason = () => req.signal.reason ?? new DOMException('This operation was aborted', 'AbortError');
+        if (req.signal.aborted)
+            throw abortReason();
+        const { server, transport } = await createServer(commands, mcpOptions, true);
+        let closing;
+        const close = () => (closing ??= server.close());
+        // Transport closure does not settle `handleRequest`; reject the public fetch separately.
+        let rejectAbort;
+        const aborted = new Promise((_resolve, reject) => {
+            rejectAbort = reject;
+        });
+        let didAbort = false;
+        const abort = () => {
+            if (didAbort)
+                return;
+            didAbort = true;
+            rejectAbort(abortReason());
+            void close();
+        };
+        req.signal.addEventListener('abort', abort, { once: true });
+        // Catch aborts that happened during asynchronous server creation.
+        if (req.signal.aborted)
+            abort();
+        try {
+            if (req.signal.aborted)
+                return await aborted;
+            return await Promise.race([transport.handleRequest(req), aborted]);
+        }
+        finally {
+            req.signal.removeEventListener('abort', abort);
+            await close();
+        }
     };
 }
 function isOpenapiRoute(segments) {
@@ -1730,7 +1849,7 @@ function resolveCommand(commands, tokens) {
         ...(outputPolicy ? { outputPolicy } : undefined),
     };
 }
-/** @internal Extracts built-in flags (--full-output, --format, --json, --llms, --help, --version) from argv. */
+/** @internal Extracts built-in flags from argv. */
 const validFormats = new Set(['toon', 'json', 'yaml', 'md', 'jsonl']);
 function extractBuiltinFlags(argv, options = {}) {
     let fullOutput = false;
@@ -1738,6 +1857,8 @@ function extractBuiltinFlags(argv, options = {}) {
     let llmsFull = false;
     let mcp = false;
     let help = false;
+    let update = false;
+    let updateCheck = false;
     let version = false;
     let schema = false;
     let format = 'toon';
@@ -1764,7 +1885,12 @@ function extractBuiltinFlags(argv, options = {}) {
             mcp = true;
         else if (token === '--help' || token === '-h')
             help = true;
-        else if (token === '--version')
+        else if (token === '--update')
+            update = true;
+        else if (token === Update.checkFlag)
+            updateCheck = true;
+        // A following value belongs to a command-local `--version` option.
+        else if (token === '--version' && (argv[i + 1] === undefined || argv[i + 1].startsWith('-')))
             version = true;
         else if (token === '--schema')
             schema = true;
@@ -1837,6 +1963,8 @@ function extractBuiltinFlags(argv, options = {}) {
         llmsFull,
         mcp,
         help,
+        update,
+        updateCheck,
         version,
         schema,
         rest,
@@ -2001,7 +2129,7 @@ async function runMcpDoctor(name, commands, options) {
     const chunks = [];
     output.on('data', (chunk) => chunks.push(chunk.toString()));
     let serveError;
-    const done = Mcp.serve(name, options.version ?? '0.0.0', commands, {
+    const done = Mcp.serve(options.mcp?.name ?? name, options.version ?? '0.0.0', commands, {
         input,
         output,
         middlewares: options.middlewares,
@@ -2010,6 +2138,7 @@ async function runMcpDoctor(name, commands, options) {
         version: options.version,
         ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
         ...(options.mcp?.icons ? { icons: options.mcp.icons } : undefined),
+        ...(options.mcp?.title ? { title: options.mcp.title } : undefined),
         tools: { ...options.mcp?.tools, discovery: 'direct' },
     }).catch((error) => {
         serveError = error;
@@ -2241,6 +2370,16 @@ function formatHumanCta(cta) {
         lines.push(`  ${c.command}${desc}`);
     }
     return lines.join('\n');
+}
+/** @internal Merges framework-generated CTA blocks while preserving the first description. */
+function mergeFormattedCtas(...blocks) {
+    const defined = blocks.filter((block) => block !== undefined);
+    if (defined.length === 0)
+        return undefined;
+    return {
+        description: defined[0].description,
+        commands: defined.flatMap((block) => block.commands),
+    };
 }
 /** @internal Type guard for sentinel results. */
 function hasRequiredArgs(args) {

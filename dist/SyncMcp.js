@@ -1,7 +1,7 @@
+import { agents as agentRegistry, detectGlobalAgents, detectProjectAgents, getAgentTypes, upsertServer, } from 'add-mcp';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { agents as agentRegistry, detectGlobalAgents, detectProjectAgents, getAgentTypes, upsertServer, } from 'add-mcp';
 import { detectRunner } from './internal/pm.js';
 /**
  * Registers the CLI as an MCP server. Agent config writes run in-process through
@@ -10,7 +10,7 @@ import { detectRunner } from './internal/pm.js';
  * Amp is written directly since add-mcp does not support it.
  */
 export async function register(name, options = {}) {
-    const command = options.command ?? defaultCommand(name, detectRunner());
+    const command = options.command ?? defaultCommand(options.cli ?? name, detectRunner());
     const explicit = (options.agents ?? []).filter(Boolean);
     const [cmd, ...args] = splitCommand(command);
     const agents = [];
@@ -98,8 +98,7 @@ function shouldUseBareCommand(name) {
         return false;
     const info = nodeModulesInfo();
     if (info)
-        return (!info.entry.startsWith('.bin/') &&
-            !packageDependsOn(info.root, entryPackageName() ?? name));
+        return (!info.entry.startsWith('.bin/') && !packageDependsOn(info.root, entryPackageName() ?? name));
     const file = bin.replace(/\\/g, '/').split('/').pop();
     return file === name || file === `${name}.cmd` || file === `${name}.ps1`;
 }

@@ -24,6 +24,8 @@ export declare namespace serve {
         instructions?: string | undefined;
         /** Icons shown by MCP clients when presenting the server. */
         icons?: Icon[] | undefined;
+        /** Human-readable MCP server title. */
+        title?: string | undefined;
         /** Filters which command tools are exposed to MCP clients. */
         tools?: ToolFilter | undefined;
     };

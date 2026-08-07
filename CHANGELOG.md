@@ -1,5 +1,102 @@
 # incur
 
+## 0.4.26
+
+### Patch Changes
+
+- 0b4df91: Added GitHub action tag.
+
+## 0.4.25
+
+### Patch Changes
+
+- 8e9dd67: Appended standalone binary assets to the latest matching GitHub release, including Changesets workspace releases.
+
+## 0.4.24
+
+### Patch Changes
+
+- 6ff275f: Published completed standalone binary releases by default and added a `publish` input for draft-first workflows.
+
+## 0.4.23
+
+### Patch Changes
+
+- 32c2fdf: Fixed Alpine smoke tests for Bun musl binaries.
+
+## 0.4.22
+
+### Patch Changes
+
+- 5b5103d: Made the binary release action create missing drafts and upload to existing published releases.
+
+## 0.4.21
+
+### Patch Changes
+
+- 452578e: Added cross-platform binary distribution, and update notices
+
+  ```ts
+  import { Binary, Cli } from 'incur'
+
+  const cli = Cli.create('my-cli', {
+    update: Binary.github({ repository: 'example/my-cli' }),
+  })
+  ```
+
+- 630815a: Added `sync.body`, printed verbatim after the synced skills, for setup `skills add` cannot perform itself.
+
+  ```ts
+  const cli = Cli.create('my-cli', {
+    sync: {
+      body: 'Authorize the app at https://github.com/apps/my-cli/installations/new',
+    },
+  })
+  ```
+
+## 0.4.20
+
+### Patch Changes
+
+- dfb9498: Fixed `skills add` deleting the skill it had just installed, and replacing it with a self-referential symlink, when an agent's skills directory is a symlink to the canonical one.
+
+## 0.4.19
+
+### Patch Changes
+
+- 6c6bc6c: Added configurable MCP server names and titles.
+
+  ```ts
+  Cli.create('tapimo', { mcp: { name: 'tempo', title: 'Tempo MCP' } })
+  ```
+
+## 0.4.18
+
+### Patch Changes
+
+- 1cc5c95: Prevented completed MCP JSON responses from retaining transport stream state.
+- 9f11871: Isolated stateless MCP requests, preventing cross-client response collisions and retained aborted requests.
+
+## 0.4.17
+
+### Patch Changes
+
+- 5b9647a: Delivered CTA suggestions in MCP tool result and error text, keeping `_meta.cta` for structured consumers.
+- eacc238: Added variadic positional arguments: a final `z.array(...)` args key collects all remaining positionals.
+
+  ```ts
+  Cli.create('my-cli').command('lint', {
+    args: z.object({ paths: z.array(z.string()).describe('Files to lint') }),
+    run: (c) => ({ count: c.args.paths.length }),
+  })
+  ```
+
+## 0.4.16
+
+### Patch Changes
+
+- 8da2cfc: Fixed parsed global options missing from command handler contexts.
+
 ## 0.4.15
 
 ### Patch Changes

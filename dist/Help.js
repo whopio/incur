@@ -157,14 +157,14 @@ export function formatCommand(name, options = {}) {
     }
     return lines.join('\n');
 }
-/** Builds the synopsis string with `<required>` and `[optional]` placeholders. */
+/** Builds the synopsis string with `<required>`, `[optional]`, and `<variadic...>` placeholders. */
 function buildSynopsis(name, args) {
     if (!args)
         return name;
     const parts = [name];
     for (const [key, schema] of Object.entries(args.shape)) {
         const type = resolveTypeName(schema);
-        const label = type.includes('|') ? type : key;
+        const label = (type.includes('|') ? type : key) + (type === 'array' ? '...' : '');
         parts.push(schema._zod.optout === 'optional' ? `[${label}]` : `<${label}>`);
     }
     return parts.join(' ');
@@ -319,6 +319,7 @@ function globalOptionsLines(root = false, configFlag, globals) {
         { flag: '--token-limit <n>', desc: 'Limit output to n tokens' },
         { flag: '--token-offset <n>', desc: 'Skip first n tokens of output' },
         { flag: '--full-output', desc: 'Show full output envelope' },
+        ...(root ? [{ flag: '--update', desc: 'Update to latest version' }] : []),
         ...(root ? [{ flag: '--version', desc: 'Show version' }] : []),
     ].sort((a, b) => a.flag.localeCompare(b.flag));
     const maxLen = Math.max(...flags.map((f) => f.flag.length));
