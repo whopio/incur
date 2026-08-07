@@ -3,12 +3,17 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-function exec(cmd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+function exec(
+  cmd: string,
+  args: string[],
+  input?: string,
+): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout: 30_000 }, (error, stdout, stderr) => {
+    const child = execFile(cmd, args, { timeout: 30_000 }, (error, stdout, stderr) => {
       if (error) reject(new Error(stderr?.trim() || stdout?.trim() || error.message))
       else resolve({ stdout, stderr })
     })
+    if (input !== undefined) child.stdin?.end(input)
   })
 }
 
@@ -92,6 +97,27 @@ cli.serve()
   test('shows version', async () => {
     const { stdout } = await exec(bin, ['--version'])
     expect(stdout.trim()).toBe('1.0.0')
+  })
+
+  test('serves MCP over stdio', async () => {
+    const { stdout } = await exec(
+      bin,
+      ['--mcp'],
+      `${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'test-client', version: '1.0.0' },
+        },
+      })}\n`,
+    )
+    expect(JSON.parse(stdout).result.serverInfo).toMatchObject({
+      name: 'test-cli',
+      version: '1.0.0',
+    })
   })
 
   test('updates through a custom binary provider', async () => {
