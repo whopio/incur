@@ -640,7 +640,7 @@ export declare namespace create {
           suggestions?: string[] | undefined
         }
       | undefined
-    /** Configures updates. Package installs are inferred; standalone binaries can provide custom callbacks. Pass `false` to disable automatic checks. */
+    /** Configures updates. Package installs are inferred; standalone binaries can provide custom callbacks. Pass `false` to disable checks and explicit installs. */
     update?: false | UpdateOptions | undefined
     /** The CLI version string. */
     version?: string | undefined
@@ -809,6 +809,16 @@ async function serveImpl(
 
   // --help takes precedence over --update.
   if (update && !help) {
+    if (options.update === false) {
+      const output = {
+        code: 'UPDATE_DISABLED',
+        message: `Updates are disabled for '${name}'.`,
+      }
+      if (human) writeln(formatHumanError(output))
+      else writeln(Formatter.format(output, formatFlag))
+      exit(1)
+      return
+    }
     try {
       const result = await Update.install(name, updateOptions)
       if (human) {

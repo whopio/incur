@@ -3707,6 +3707,19 @@ describe('update notices', () => {
     expect(output).not.toContain('Update available')
   })
 
+  test('prevents explicit installs when updates are disabled', async () => {
+    const cli = Cli.create('frog', { update: false })
+
+    const { exitCode, output } = await serve(cli, ['--update', '--format', 'json'])
+
+    expect(exitCode).toBe(1)
+    expect(JSON.parse(output)).toEqual({
+      code: 'UPDATE_DISABLED',
+      message: "Updates are disabled for 'frog'.",
+    })
+    expect(__mockInstallCalls).toBe(0)
+  })
+
   test('omits update notices from structured agent output', async () => {
     ;(process.stdout as any).isTTY = false
     const cli = Cli.create('frog')

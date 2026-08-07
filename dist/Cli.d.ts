@@ -270,7 +270,7 @@ export declare namespace create {
             /** Example prompts shown after sync to help users get started. */
             suggestions?: string[] | undefined;
         } | undefined;
-        /** Configures updates. Package installs are inferred; standalone binaries can provide custom callbacks. Pass `false` to disable automatic checks. */
+        /** Configures updates. Package installs are inferred; standalone binaries can provide custom callbacks. Pass `false` to disable checks and explicit installs. */
         update?: false | UpdateOptions | undefined;
         /** The CLI version string. */
         version?: string | undefined;

@@ -937,7 +937,7 @@ const cli = Cli.create('my-cli', {
 
 The compiled-binary guard preserves the default package-manager behavior for source and package installations.
 
-Set `update: false` to disable automatic notices. `NO_UPDATE_NOTIFIER`, `CI`, and `npm_config_update_notifier=false` also suppress notices without disabling explicit updates.
+Set `update: false` to disable update checks and explicit installs. `NO_UPDATE_NOTIFIER`, `CI`, and `npm_config_update_notifier=false` suppress automatic notices without disabling explicit updates.
 
 ### Global options
 

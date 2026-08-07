@@ -329,6 +329,18 @@ async function serveImpl(name, commands, argv, options = {}) {
     }
     // --help takes precedence over --update.
     if (update && !help) {
+        if (options.update === false) {
+            const output = {
+                code: 'UPDATE_DISABLED',
+                message: `Updates are disabled for '${name}'.`,
+            };
+            if (human)
+                writeln(formatHumanError(output));
+            else
+                writeln(Formatter.format(output, formatFlag));
+            exit(1);
+            return;
+        }
         try {
             const result = await Update.install(name, updateOptions);
             if (human) {
