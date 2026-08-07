@@ -3754,6 +3754,17 @@ describe('update notices', () => {
     expect(output).not.toContain('✓ Updated frog')
   })
 
+  test('reports when the CLI is already up to date', async () => {
+    __mockInstall = { name: 'frog', updated: false }
+    const cli = Cli.create('frog')
+
+    const { exitCode, output } = await serve(cli, ['--update'])
+
+    expect(exitCode).toBeUndefined()
+    expect(output).toContain('✓ frog is already up to date')
+    expect(output).not.toContain('✓ Updated frog')
+  })
+
   test('reports update failures', async () => {
     __mockInstall = new Error('binary installer failed')
     const cli = Cli.create('frog')

@@ -62,6 +62,17 @@ pnpm exec incur build ./src/bin.ts \
   --target linux-x64-glibc-baseline
 ```
 
+To leave modules out of the standalone bundle, repeat `--external`:
+
+```sh
+pnpm exec incur build ./src/bin.ts \
+  --external @napi-rs/keyring \
+  --external sharp
+```
+
+External modules must either be available at runtime or be optional code paths
+that the executable can run without.
+
 If one target fails, Incur fails the command.
 
 ## Installers
@@ -215,6 +226,23 @@ The provider supports public GitHub repositories and stable releases:
 Incur reads the cached result for automatic update checks. It starts a
 background refresh if the cache is absent or at least one day old.
 
+By default, users install a cached update with `frog --update`. To install from
+the detached refresh process immediately after it discovers a strictly newer
+version, enable `autoInstall` only for compiled binaries:
+
+```ts
+const cli = Cli.create('frog', {
+  update: {
+    ...Binary.github({ repository: 'wevm/frog' }),
+    autoInstall: Boolean(Binary.version),
+  },
+})
+```
+
+The `Binary.version` guard leaves source and package installations on their
+default package-manager update path. A refresh never installs the current or an
+older version.
+
 Incur does not show automatic notices in agent, JSON, MCP, help, or completion
 output. When the cache contains a newer version, an interactive terminal shows
 this message:
@@ -250,7 +278,8 @@ version check fails, the installed executable stays usable. If a Windows update
 fails after it moves the old executable, the background process tries to
 restore it. The backup is in the same directory.
 
-If the background process fails, Incur writes recovery details to
+When no newer compatible release exists, `--update` reports that the CLI is
+already current. If the background process fails, Incur writes recovery details to
 `<executable>.incur-error-<uuid>.txt`. It puts the error file beside the new
 executable and any remaining backup. Read the error file. Fix the file system
 error. Then run `--update` again. Never disable checksum verification.

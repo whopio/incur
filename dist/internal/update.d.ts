@@ -22,6 +22,8 @@ export type InstallContext = {
 };
 /** Internal options for resolving and running an update provider. */
 export type Options = {
+    /** Whether a detached refresh installs a newly discovered version. Defaults to false. */
+    autoInstall?: boolean | undefined;
     /** Whether the executing CLI is an Incur-built standalone binary. */
     binary?: boolean | undefined;
     /** Custom latest-version checker for non-package distributions. */
@@ -29,7 +31,7 @@ export type Options = {
     /** Whether installation finishes after the updating process exits. */
     deferred?: boolean | undefined;
     /** Custom installer for non-package distributions. */
-    install?: ((context: InstallContext) => Promise<void> | void) | undefined;
+    install?: ((context: InstallContext) => Promise<boolean | void> | boolean | void) | undefined;
     /** Minimum time between update checks in milliseconds. Defaults to one day. */
     interval?: number | undefined;
     /** Registry package name. Defaults to the package containing the executing binary. */
@@ -63,6 +65,8 @@ export declare namespace install {
         deferred?: boolean | undefined;
         /** Package or CLI name displayed to the user. */
         name: string;
+        /** Whether an update was installed. Omitted when the installer does not report status. */
+        updated?: false | undefined;
     };
 }
 /** @internal Returns whether `candidate` is a newer semantic version than `current`. */

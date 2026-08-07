@@ -152,6 +152,32 @@ describe('build', () => {
     ])
   })
 
+  test('passes repeatable external modules to every Bun build', async () => {
+    const calls: string[][] = []
+    const execute: build.Execute = async (_command, args) => {
+      if (args[0] === '--version') return
+      calls.push(args)
+      const file = args.find((arg) => arg.startsWith('--outfile='))!.slice('--outfile='.length)
+      await writeFile(file, args.join('\n'))
+    }
+
+    await build({
+      entry,
+      execute,
+      externals: ['@napi-rs/keyring', 'sharp'],
+      name: 'frog',
+      targets: ['darwin-arm64', 'windows-arm64'],
+      version: '1.0.0',
+    })
+
+    expect(
+      calls.map((args) => args.slice(args.indexOf('--external'), args.indexOf('--define'))),
+    ).toEqual([
+      ['--external', '@napi-rs/keyring', '--external', 'sharp'],
+      ['--external', '@napi-rs/keyring', '--external', 'sharp'],
+    ])
+  })
+
   test('generates release-pinned installers from package metadata', async () => {
     await writeFile(
       join(directory, 'package.json'),

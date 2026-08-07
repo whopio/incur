@@ -333,11 +333,15 @@ async function serveImpl(name, commands, argv, options = {}) {
             const result = await Update.install(name, updateOptions);
             if (human) {
                 const lines = [
-                    result.deferred ? `✓ Update staged for ${result.name}` : `✓ Updated ${result.name}`,
+                    result.updated === false
+                        ? `✓ ${result.name} is already up to date`
+                        : result.deferred
+                            ? `✓ Update staged for ${result.name}`
+                            : `✓ Updated ${result.name}`,
                 ];
                 if (result.command)
                     lines.push(`  ${result.command}`);
-                if (result.deferred)
+                if (result.deferred && result.updated !== false)
                     lines.push('  Installation will finish after this process exits.');
                 writeln(lines.join('\n'));
             }

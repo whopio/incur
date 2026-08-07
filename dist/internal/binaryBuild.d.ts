@@ -35,6 +35,8 @@ export declare namespace build {
         entry: string;
         /** Command executor override used by tests and build integrations. */
         execute?: Execute | undefined;
+        /** Modules to exclude from the standalone bundle. */
+        externals?: string[] | undefined;
         /** Generate release-pinned shell and PowerShell installers. */
         installer?: boolean | undefined;
         /** CLI name override. */

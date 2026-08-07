@@ -62,9 +62,13 @@ export function github(options: github.Options): Cli.create.UpdateOptions {
     ...(process.platform === 'win32' ? { deferred: true } : undefined),
     async install(context) {
       const releases = await fetchReleases(options.repository)
-      const release = selectRelease(releases, context.current ?? binaryVersion, assetName)
-      if (!release)
-        throw new Error(`No compatible update is available for ${binaryName} ${binaryTarget}.`)
+      const current = context.current ?? binaryVersion
+      const release = selectRelease(releases, current, assetName)
+      if (!release) {
+        if (hasNewerStableRelease(releases, current))
+          throw new Error(`No compatible update is available for ${binaryName} ${binaryTarget}.`)
+        return false
+      }
       await installRelease(release)
     },
   }
@@ -214,6 +218,16 @@ function selectRelease(
   }
 
   return selected
+}
+
+/** Returns whether GitHub exposes a newer published stable release for any target. */
+function hasNewerStableRelease(releases: Release[], current: string): boolean {
+  return releases.some((release) => {
+    if (release.draft || release.prerelease || typeof release.published_at !== 'string')
+      return false
+    const version = stableVersion(release.tag_name)
+    return version ? isNewerVersion(version, current) : false
+  })
 }
 
 /** Returns a stable semantic version from a release tag. */

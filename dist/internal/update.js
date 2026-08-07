@@ -40,6 +40,8 @@ export async function refresh(name, options = {}) {
     if (!latest || !parseVersion(latest))
         return;
     writeCache(cachePath(provider.key), { checkedAt: Date.now(), latest });
+    if (options.autoInstall && provider.install && isNewerVersion(latest, provider.current))
+        await install(name, options);
 }
 /** @internal Installs the latest CLI version through the configured provider. */
 export async function install(name, options = {}) {
@@ -47,7 +49,7 @@ export async function install(name, options = {}) {
     if (!provider?.install)
         throw new Error(`No update installer is configured for '${name}'.`);
     const cached = readCache(cachePath(provider.key));
-    await provider.install({
+    const updated = await provider.install({
         ...(provider.current ? { current: provider.current } : undefined),
         ...(cached?.latest ? { latest: cached.latest } : undefined),
         name,
@@ -55,8 +57,9 @@ export async function install(name, options = {}) {
     });
     return {
         ...(provider.command ? { command: provider.command } : undefined),
-        ...(provider.deferred ? { deferred: true } : undefined),
+        ...(provider.deferred && updated !== false ? { deferred: true } : undefined),
         name: provider.name,
+        ...(updated === false ? { updated: false } : undefined),
     };
 }
 /** @internal Returns whether `candidate` is a newer semantic version than `current`. */

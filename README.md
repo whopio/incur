@@ -863,6 +863,8 @@ incur build ./src/bin.ts --installer
 
 The default build creates unsigned binaries for every supported platform. Add `--installer` to include shell installation scripts.
 
+Repeat `--external <module>` to leave optional or runtime-provided modules out of the standalone bundle.
+
 Copy this workflow to `.github/workflows/binary-release.yml` to prepare a release and upload its unsigned binaries:
 
 ```yaml
@@ -922,7 +924,18 @@ const cli = Cli.create('my-cli', {
 })
 ```
 
-Standalone executables configured with `Binary.github` use the same detached check path and install only after an explicit `--update`.
+Standalone executables configured with `Binary.github` use the same detached check path and install only after an explicit `--update` by default. To install after a detached refresh discovers a strictly newer version, opt in only for compiled binaries:
+
+```ts
+const cli = Cli.create('my-cli', {
+  update: {
+    ...Binary.github({ repository: 'example/my-cli' }),
+    autoInstall: Boolean(Binary.version),
+  },
+})
+```
+
+The compiled-binary guard preserves the default package-manager behavior for source and package installations.
 
 Set `update: false` to disable automatic notices. `NO_UPDATE_NOTIFIER`, `CI`, and `npm_config_update_notifier=false` also suppress notices without disabling explicit updates.
 

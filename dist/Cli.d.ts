@@ -277,12 +277,14 @@ export declare namespace create {
     };
     /** Options for update checks and installation. */
     type UpdateOptions = {
+        /** Whether a detached refresh installs a newly discovered version. Defaults to false. */
+        autoInstall?: boolean | undefined;
         /** Custom latest-version checker for non-package distributions. */
         check?: ((context: UpdateCheckContext) => Promise<string | undefined> | string | undefined) | undefined;
         /** Whether installation finishes after the updating process exits. */
         deferred?: boolean | undefined;
         /** Custom installer for non-package distributions. */
-        install?: ((context: UpdateInstallContext) => Promise<void> | void) | undefined;
+        install?: ((context: UpdateInstallContext) => Promise<boolean | void> | boolean | void) | undefined;
         /** Minimum time between update checks in milliseconds. Defaults to one day. */
         interval?: number | undefined;
         /** Registry package name. Defaults to the package containing the executing binary. */

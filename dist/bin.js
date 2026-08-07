@@ -21,6 +21,10 @@ const cli = Cli.create('incur', {
         entry: z.string().describe('CLI entrypoint file or project directory'),
     }),
     options: z.object({
+        external: z
+            .array(z.string())
+            .optional()
+            .describe('Module to exclude from the bundle (repeatable)'),
         installer: z.boolean().optional().describe('Generate initial-install scripts'),
         name: z.string().optional().describe('CLI name override'),
         output: z.string().optional().describe('Output directory'),
@@ -32,6 +36,7 @@ const cli = Cli.create('incur', {
     run(c) {
         return BinaryBuild.build({
             entry: c.args.entry,
+            externals: c.options.external,
             installer: c.options.installer,
             name: c.options.name,
             output: c.options.output,

@@ -38,6 +38,7 @@ export async function build(options) {
         ? path.resolve(cwd, options.output)
         : path.join(metadata?.directory ?? path.dirname(resolved.entry), 'dist', 'binaries');
     const selected = normalizeTargets(options.targets);
+    const externals = options.externals ?? [];
     if (options.installer && selected.length !== targets.length)
         throw new Error('Installers require the full target matrix. Omit --target with --installer.');
     const repository = options.installer
@@ -84,6 +85,7 @@ export async function build(options) {
                 '--compile',
                 `--target=${definition.bun}`,
                 `--outfile=${executable}`,
+                ...externals.flatMap((external) => ['--external', external]),
                 '--define',
                 `__INCUR_BINARY_NAME__=${JSON.stringify(name)}`,
                 '--define',

@@ -6,6 +6,7 @@ declare const cli: Cli.Cli<{
             entry: string;
         };
         options: {
+            external?: string[] | undefined;
             installer?: boolean | undefined;
             name?: string | undefined;
             output?: string | undefined;

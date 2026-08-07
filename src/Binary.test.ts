@@ -83,6 +83,38 @@ test('uses an explicit CLI version instead of embedded version metadata', async 
   await expect(provider.check!({ current: '2.0.0', name: 'frog' })).resolves.toBeUndefined()
 })
 
+test('reports an already-current binary without downloading an asset', async () => {
+  const Binary = await load(binary)
+  const fetch = vi.fn(async () => response([release('1.0.0')]))
+  vi.stubGlobal('fetch', fetch)
+  const provider = Binary.github({ repository: 'wevm/frog' })
+
+  await expect(
+    provider.install!({
+      current: '1.0.0',
+      latest: '1.0.0',
+      name: 'frog',
+    }),
+  ).resolves.toBe(false)
+  expect(fetch).toHaveBeenCalledOnce()
+})
+
+test('rejects a newer release without an exact target asset', async () => {
+  const Binary = await load(binary)
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => response([release('2.0.0', { asset: 'frog-linux-x64-glibc-baseline.gz' })])),
+  )
+  const provider = Binary.github({ repository: 'wevm/frog' })
+
+  await expect(
+    provider.install!({
+      current: '1.0.0',
+      name: 'frog',
+    }),
+  ).rejects.toThrow('No compatible update is available for frog darwin-arm64.')
+})
+
 test('follows validated GitHub release pagination', async () => {
   const Binary = await load(binary)
   const fetch = vi

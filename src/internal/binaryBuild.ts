@@ -45,6 +45,7 @@ export async function build(options: build.Options): Promise<build.Result> {
     ? path.resolve(cwd, options.output)
     : path.join(metadata?.directory ?? path.dirname(resolved.entry), 'dist', 'binaries')
   const selected = normalizeTargets(options.targets)
+  const externals = options.externals ?? []
   if (options.installer && selected.length !== targets.length)
     throw new Error('Installers require the full target matrix. Omit --target with --installer.')
   const repository = options.installer
@@ -94,6 +95,7 @@ export async function build(options: build.Options): Promise<build.Result> {
         '--compile',
         `--target=${definition.bun}`,
         `--outfile=${executable}`,
+        ...externals.flatMap((external) => ['--external', external]),
         '--define',
         `__INCUR_BINARY_NAME__=${JSON.stringify(name)}`,
         '--define',
@@ -213,6 +215,8 @@ export declare namespace build {
     entry: string
     /** Command executor override used by tests and build integrations. */
     execute?: Execute | undefined
+    /** Modules to exclude from the standalone bundle. */
+    externals?: string[] | undefined
     /** Generate release-pinned shell and PowerShell installers. */
     installer?: boolean | undefined
     /** CLI name override. */

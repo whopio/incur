@@ -168,18 +168,56 @@ test('reinvokes embedded binaries directly', () => {
 test('refreshes a custom provider cache', async () => {
   process.argv[1] = path.join(directory, 'standalone')
   const checker = vi.fn(() => '2.0.0')
+  const installer = vi.fn()
 
-  await refresh('frog', { check: checker, version: '1.0.0' })
+  await refresh('frog', { check: checker, install: installer, version: '1.0.0' })
 
   expect(checker).toHaveBeenCalledWith({
     current: '1.0.0',
     name: 'frog',
   })
+  expect(installer).not.toHaveBeenCalled()
   expect(readCache('frog')).toEqual({
     checkedAt: expect.any(Number),
     latest: '2.0.0',
   })
 })
+
+test('auto-installs a newly discovered version during refresh', async () => {
+  process.argv[1] = path.join(directory, 'standalone')
+  const installer = vi.fn()
+
+  await refresh('frog', {
+    autoInstall: true,
+    check: () => '2.0.0',
+    install: installer,
+    version: '1.0.0',
+  })
+
+  expect(installer).toHaveBeenCalledOnce()
+  expect(installer).toHaveBeenCalledWith({
+    current: '1.0.0',
+    latest: '2.0.0',
+    name: 'frog',
+  })
+})
+
+test.each(['1.0.0', '0.9.0'])(
+  'does not auto-install version %s when the current version is 1.0.0',
+  async (latest) => {
+    process.argv[1] = path.join(directory, 'standalone')
+    const installer = vi.fn()
+
+    await refresh('frog', {
+      autoInstall: true,
+      check: () => latest,
+      install: installer,
+      version: '1.0.0',
+    })
+
+    expect(installer).not.toHaveBeenCalled()
+  },
+)
 
 test('installs through a custom standalone provider', async () => {
   process.argv[1] = path.join(directory, 'standalone')
@@ -197,6 +235,18 @@ test('installs through a custom standalone provider', async () => {
     latest: '2.0.0',
     name: 'frog',
   })
+})
+
+test('reports when a custom installer finds no newer version', async () => {
+  process.argv[1] = path.join(directory, 'standalone')
+
+  await expect(
+    install('frog', {
+      deferred: true,
+      install: () => false,
+      version: '1.0.0',
+    }),
+  ).resolves.toEqual({ name: 'frog', updated: false })
 })
 
 test('reports deferred custom installations', async () => {
