@@ -2,7 +2,7 @@ import type { z } from 'zod'
 
 import type { FieldError } from './Errors.js'
 import { ParseError, ValidationError } from './Errors.js'
-import { isRecord, toKebab } from './internal/helpers.js'
+import { arraySchema, isRecord, toKebab, unwrapSchema } from './internal/helpers.js'
 
 /** Parses raw argv tokens against Zod schemas for args and options. */
 export function parse<
@@ -206,19 +206,12 @@ function normalizeOptionDefaults(
   return normalized
 }
 
-/** Unwraps ZodDefault/ZodOptional to get the inner type. */
-function unwrap(schema: z.ZodType): z.ZodType {
-  let s = schema as any
-  while (s.def?.innerType) s = s.def.innerType
-  return s
-}
-
 /** Checks if an option's inner type is boolean. */
 function isBooleanOption(name: string, schema: z.ZodObject<any> | undefined): boolean {
   if (!schema) return false
   const field = schema.shape[name]
   if (!field) return false
-  return unwrap(field).constructor.name === 'ZodBoolean'
+  return unwrapSchema(field).constructor.name === 'ZodBoolean'
 }
 
 /** Checks if an option is a count type (z.count()). */
@@ -234,7 +227,7 @@ function isArrayOption(name: string, schema: z.ZodObject<any> | undefined): bool
   if (!schema) return false
   const field = schema.shape[name]
   if (!field) return false
-  return unwrap(field).constructor.name === 'ZodArray'
+  return arraySchema(field) !== undefined
 }
 
 /** Sets an option value, collecting into arrays for array schemas. */
@@ -307,7 +300,7 @@ export function parseEnv<const env extends z.ZodObject<any>>(
 
 /** Coerces an env var string to the type expected by the schema field. */
 function coerceEnv(value: string, field: z.ZodType): unknown {
-  const inner = unwrap(field)
+  const inner = unwrapSchema(field)
   const typeName = inner.constructor.name
   if (typeName === 'ZodNumber') return Number(value)
   if (typeName === 'ZodBoolean') return value === 'true' || value === '1'
@@ -318,7 +311,7 @@ function coerceEnv(value: string, field: z.ZodType): unknown {
 function coerce(value: unknown, name: string, schema: z.ZodObject<any>): unknown {
   const field = schema.shape[name]
   if (!field) return value
-  const inner = unwrap(field)
+  const inner = unwrapSchema(field)
   const typeName = inner.constructor.name
 
   if (typeName === 'ZodNumber' && typeof value === 'string') {
@@ -333,8 +326,9 @@ function coerce(value: unknown, name: string, schema: z.ZodObject<any>): unknown
   if (typeName === 'ZodUnion' && typeof value === 'string') {
     return coerceUnion(value, inner)
   }
-  if (typeName === 'ZodArray' && Array.isArray(value)) {
-    return coerceArray(value, name, inner)
+  const array = arraySchema(inner)
+  if (array && Array.isArray(value)) {
+    return coerceArray(value, name, array)
   }
   return value
 }
@@ -352,7 +346,7 @@ function isStructuredType(typeName: string): boolean {
  */
 function coerceArray(values: unknown[], name: string, arraySchema: z.ZodType): unknown {
   const element = (arraySchema as any).def?.element as z.ZodType | undefined
-  const structured = element ? isStructuredType(unwrap(element).constructor.name) : false
+  const structured = element ? isStructuredType(unwrapSchema(element).constructor.name) : false
 
   if (values.length === 1 && typeof values[0] === 'string' && values[0].trim().startsWith('[')) {
     try {
@@ -374,7 +368,8 @@ function coerceArray(values: unknown[], name: string, arraySchema: z.ZodType): u
 /** Parses a JSON string against a union that accepts objects, falling back to the literal string. */
 function coerceUnion(value: string, union: z.ZodType): unknown {
   const members = (union as any).def?.options as z.ZodType[] | undefined
-  if (!members?.some((member) => isStructuredType(unwrap(member).constructor.name))) return value
+  if (!members?.some((member) => isStructuredType(unwrapSchema(member).constructor.name)))
+    return value
   const trimmed = value.trim()
   if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return value
   try {

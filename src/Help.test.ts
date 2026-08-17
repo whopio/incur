@@ -1,4 +1,4 @@
-import { Help, z } from 'incur'
+import { Help, Openapi, z } from 'incur'
 
 describe('redact: short secrets should not leak characters', () => {
   /**
@@ -253,6 +253,17 @@ describe('formatCommand', () => {
       }),
     })
     expect(result).toContain('--level <low|medium|high>')
+  })
+
+  test('shows nullable array unions as arrays', () => {
+    const redirectUris = Openapi.toZod({
+      type: ['array', 'null'],
+      items: { type: 'string' },
+    }).optional()
+    const result = Help.formatCommand('tool create', {
+      options: z.object({ redirect_uris: redirectUris }),
+    })
+    expect(result).toContain('--redirect_uris <array>')
   })
 
   test('shows [deprecated] tag for deprecated options', () => {

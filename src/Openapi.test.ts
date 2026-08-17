@@ -270,6 +270,62 @@ describe('generateCommands', () => {
     expect(line('--note')).not.toContain('(required)')
   })
 
+  test('nullable array body properties accept repeated flags', async () => {
+    const bodySpec = {
+      openapi: '3.1.0',
+      info: { title: 'Test API', version: '1.0.0' },
+      paths: {
+        '/apps': {
+          post: {
+            operationId: 'createApp',
+            requestBody: {
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      redirect_uris: {
+                        type: ['array', 'null'],
+                        items: { type: 'string' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            responses: { '201': { description: 'Created' } },
+          },
+        },
+      },
+    }
+    let request: Request | undefined
+    const fetch = vi.fn(async (input: Request) => {
+      request = input.clone()
+      return Response.json({ id: 'app_test' })
+    })
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch,
+      openapi: bodySpec,
+    })
+
+    const help = await serve(cli, ['api', 'createApp', '--help'])
+    expect(help.output).toContain('--redirect_uris <array>')
+
+    const result = await serve(cli, [
+      'api',
+      'createApp',
+      '--redirect_uris',
+      'https://one.example/callback',
+      '--redirect_uris',
+      'https://two.example/callback',
+    ])
+    expect(result.exitCode).toBeUndefined()
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(await request!.json()).toEqual({
+      redirect_uris: ['https://one.example/callback', 'https://two.example/callback'],
+    })
+  })
+
   test('compact strips examples and oversized patterns', async () => {
     const longPattern = `^${'(?:x|y)'.repeat(60)}$`
     const compactSpec = {

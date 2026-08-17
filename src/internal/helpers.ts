@@ -1,3 +1,33 @@
+import type { z } from 'zod'
+
+/** Returns an array schema directly or from a union containing only that array and nullish types. */
+export function arraySchema(schema: z.ZodType): z.ZodType | undefined {
+  const inner = unwrapSchema(schema)
+  if (inner.constructor.name === 'ZodArray') return inner
+  if (inner.constructor.name !== 'ZodUnion') return undefined
+
+  const members = (inner as any).def?.options as z.ZodType[] | undefined
+  if (!members) return undefined
+
+  let array: z.ZodType | undefined
+  for (const member of members) {
+    const unwrapped = unwrapSchema(member)
+    const name = unwrapped.constructor.name
+    if (name === 'ZodArray') {
+      if (array) return undefined
+      array = unwrapped
+    } else if (name !== 'ZodNull' && name !== 'ZodUndefined') return undefined
+  }
+  return array
+}
+
+/** Unwraps Zod schemas with an inner type, such as optional, default, and nullable schemas. */
+export function unwrapSchema(schema: z.ZodType): z.ZodType {
+  let current = schema as any
+  while (current.def?.innerType) current = current.def.innerType
+  return current
+}
+
 /** Checks whether a value is a plain object record. */
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)

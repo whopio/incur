@@ -1,4 +1,4 @@
-import { Parser, z } from 'incur'
+import { Openapi, Parser, z } from 'incur'
 
 describe('parse', () => {
   test('returns empty args and options when no schemas', () => {
@@ -226,6 +226,46 @@ describe('parse', () => {
       options: z.object({ label: z.array(z.string()).default([]) }),
     })
     expect(result.options).toEqual({ label: ['bug', 'fix'] })
+  })
+
+  test('detects nullable arrays from JSON Schema unions', () => {
+    const redirectUris = Openapi.toZod({
+      type: ['array', 'null'],
+      items: { type: 'string' },
+    }).optional()
+    const result = Parser.parse(
+      [
+        '--redirect_uris',
+        'https://one.example/callback',
+        '--redirect_uris',
+        'https://two.example/callback',
+      ],
+      { options: z.object({ redirect_uris: redirectUris }) },
+    )
+    expect(result.options).toEqual({
+      redirect_uris: ['https://one.example/callback', 'https://two.example/callback'],
+    })
+  })
+
+  test('nullable arrays from JSON Schema accept a single JSON array value', () => {
+    const redirectUris = Openapi.toZod({
+      type: ['array', 'null'],
+      items: { type: 'string' },
+    }).optional()
+    const result = Parser.parse(
+      ['--redirect_uris', '["https://one.example/callback","https://two.example/callback"]'],
+      { options: z.object({ redirect_uris: redirectUris }) },
+    )
+    expect(result.options).toEqual({
+      redirect_uris: ['https://one.example/callback', 'https://two.example/callback'],
+    })
+  })
+
+  test('does not collect repeated flags for ambiguous array unions', () => {
+    const result = Parser.parse(['--value', 'first', '--value', 'second'], {
+      options: z.object({ value: z.union([z.array(z.string()), z.string()]) }),
+    })
+    expect(result.options).toEqual({ value: 'second' })
   })
 
   test('count defaults to 0 when flag not provided', () => {
