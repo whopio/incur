@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { builtinCommands } from './internal/command.js';
-import { describedAs, toKebab } from './internal/helpers.js';
+import { arraySchema, describedAs, toKebab } from './internal/helpers.js';
 import { defaultEnvSource } from './Parser.js';
 /** Formats help text for a router CLI or command group. */
 export function formatRoot(name, options = {}) {
@@ -220,7 +220,7 @@ function resolveTypeName(schema) {
         return 'number';
     if (unwrapped instanceof z.ZodBoolean)
         return 'boolean';
-    if (unwrapped instanceof z.ZodArray)
+    if (arraySchema(unwrapped))
         return 'array';
     if (unwrapped instanceof z.ZodEnum) {
         const values = Object.values(unwrapped._zod.def.entries);

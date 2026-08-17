@@ -1,3 +1,8 @@
+import type { z } from 'zod';
+/** Returns an array schema directly or from a union containing only that array and nullish types. */
+export declare function arraySchema(schema: z.ZodType): z.ZodType | undefined;
+/** Unwraps Zod schemas with an inner type, such as optional, default, and nullable schemas. */
+export declare function unwrapSchema(schema: z.ZodType): z.ZodType;
 /** Checks whether a value is a plain object record. */
 export declare function isRecord(value: unknown): value is Record<string, unknown>;
 /** Converts a camelCase string to kebab-case. */

@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 import type { GlobalsDescriptor } from './Cli.js'
 import { builtinCommands } from './internal/command.js'
-import { describedAs, toKebab } from './internal/helpers.js'
+import { arraySchema, describedAs, toKebab } from './internal/helpers.js'
 import { defaultEnvSource } from './Parser.js'
 
 /** Formats help text for a router CLI or command group. */
@@ -317,7 +317,7 @@ function resolveTypeName(schema: unknown): string {
   if (unwrapped instanceof z.ZodString) return 'string'
   if (unwrapped instanceof z.ZodNumber) return 'number'
   if (unwrapped instanceof z.ZodBoolean) return 'boolean'
-  if (unwrapped instanceof z.ZodArray) return 'array'
+  if (arraySchema(unwrapped as z.ZodType)) return 'array'
   if (unwrapped instanceof z.ZodEnum) {
     const values = Object.values((unwrapped as any)._zod.def.entries) as string[]
     return values.join('|')
