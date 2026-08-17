@@ -1,5 +1,16 @@
 # incur
 
+## 0.5.0
+
+### Minor Changes
+
+- d9eebb7: Add MCP server icon metadata for stdio and HTTP transports.
+
+### Patch Changes
+
+- 973bd1a: Parse nullable array options from OpenAPI schemas as repeatable CLI flags.
+- 6962ec4: Show descriptions for optional request-body flags, and mark required flags as `(required)` in help and the LLM manifest.
+
 ## 0.4.15
 
 ### Patch Changes
