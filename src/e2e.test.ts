@@ -988,6 +988,7 @@ describe('help', () => {
         skills       Sync skill files to agents (add, list)
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -1022,6 +1023,7 @@ describe('help', () => {
         status  Show authentication status
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -1049,6 +1051,7 @@ describe('help', () => {
         status    Check deployment status
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -1075,6 +1078,7 @@ describe('help', () => {
         --archived                         Include archived
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -1107,6 +1111,7 @@ describe('help', () => {
         app project deploy create production --branch release --dryRun true  # Dry run a production deploy
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -1763,6 +1768,7 @@ describe('root command with subcommands', () => {
         skills       Sync skill files to agents (add, list)
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -1940,6 +1946,7 @@ describe('env', () => {
         --scopes <array>         OAuth scopes
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -2440,6 +2447,7 @@ describe('hosted OpenAPI CLI', () => {
           skills       Sync skill files to agents (add, list)
 
         Global Options:
+          --body                              Show response body schema for command
           --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
           --format <toon|json|yaml|md|jsonl>  Output format
           --full-output                       Show full output envelope
@@ -2480,6 +2488,7 @@ describe('hosted OpenAPI CLI', () => {
           listUsers    List users
 
         Global Options:
+          --body                              Show response body schema for command
           --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
           --format <toon|json|yaml|md|jsonl>  Output format
           --full-output                       Show full output envelope
@@ -2521,6 +2530,7 @@ describe('hosted OpenAPI CLI', () => {
           skills       Sync skill files to agents (add, list)
 
         Global Options:
+          --body                              Show response body schema for command
           --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
           --format <toon|json|yaml|md|jsonl>  Output format
           --full-output                       Show full output envelope
@@ -2560,6 +2570,7 @@ describe('hosted OpenAPI CLI', () => {
           post  Create a user
 
         Global Options:
+          --body                              Show response body schema for command
           --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
           --format <toon|json|yaml|md|jsonl>  Output format
           --full-output                       Show full output envelope

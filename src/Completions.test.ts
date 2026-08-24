@@ -238,7 +238,13 @@ describe('complete with globals', () => {
   test('global flags appear as completion candidates when typing --', () => {
     const cli = makeCli()
     const commands = Cli.toCommands.get(cli)!
-    const candidates = Completions.complete(commands, undefined, ['mycli', 'build', '--'], 2, globals)
+    const candidates = Completions.complete(
+      commands,
+      undefined,
+      ['mycli', 'build', '--'],
+      2,
+      globals,
+    )
     const values = candidates.map((c) => c.value)
     expect(values).toContain('--rpc-url')
     expect(values).toContain('--chain')
@@ -248,7 +254,13 @@ describe('complete with globals', () => {
   test('global short aliases appear as candidates when typing -', () => {
     const cli = makeCli()
     const commands = Cli.toCommands.get(cli)!
-    const candidates = Completions.complete(commands, undefined, ['mycli', 'build', '-'], 2, globals)
+    const candidates = Completions.complete(
+      commands,
+      undefined,
+      ['mycli', 'build', '-'],
+      2,
+      globals,
+    )
     const values = candidates.map((c) => c.value)
     expect(values).toContain('-r')
     expect(values).toContain('-d')
@@ -266,7 +278,9 @@ describe('complete with globals', () => {
     })
     const commands = Cli.toCommands.get(cli)!
     const rootCmd = { options: z.object({ chain: z.string().optional() }) }
-    const dupeGlobals = { schema: z.object({ chain: z.string().optional().describe('Global chain') }) }
+    const dupeGlobals = {
+      schema: z.object({ chain: z.string().optional().describe('Global chain') }),
+    }
     const candidates = Completions.complete(
       commands,
       rootCmd,

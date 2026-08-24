@@ -63,6 +63,7 @@ describe('formatCommand', () => {
         --limit <number>  Max PRs to return (default: 30)
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -85,6 +86,7 @@ describe('formatCommand', () => {
       Usage: tool ping
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -114,6 +116,7 @@ describe('formatCommand', () => {
         title  Title
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -294,6 +297,7 @@ describe('formatCommand', () => {
         --env <staging|production>  Target environment (required)
 
       Global Options:
+        --body                              Show response body schema for command
         --config <path>                     Load JSON option defaults from a file
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
@@ -330,6 +334,7 @@ describe('formatRoot', () => {
         issue list  List issues
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -355,6 +360,7 @@ describe('formatRoot', () => {
         ping  Health check
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -384,6 +390,7 @@ describe('formatRoot', () => {
         fetch  Fetch a URL
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -413,6 +420,7 @@ describe('formatRoot', () => {
         url  URL to fetch
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -445,6 +453,7 @@ describe('formatRoot', () => {
         skills       Sync skill files to agents (add, list)
 
       Global Options:
+        --body                              Show response body schema for command
         --config <path>                     Load JSON option defaults from a file
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format

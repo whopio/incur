@@ -1730,6 +1730,7 @@ describe('subcommands', () => {
         list
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -2223,6 +2224,7 @@ describe('help', () => {
         skills       Sync skill files to agents (add, list)
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -2261,6 +2263,7 @@ describe('help', () => {
         skills       Sync skill files to agents (add, list)
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -2418,6 +2421,7 @@ describe('help', () => {
         name  Name
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -2452,6 +2456,7 @@ describe('help', () => {
         list  List PRs
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -2547,6 +2552,7 @@ describe('help', () => {
         skills       Sync skill files to agents (add, list)
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -2579,6 +2585,7 @@ describe('help', () => {
       Run "tool status" to check deployment progress.
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -2696,6 +2703,7 @@ describe('env', () => {
       Usage: test deploy
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
@@ -2734,6 +2742,7 @@ describe('env', () => {
         Usage: test deploy
 
         Global Options:
+          --body                              Show response body schema for command
           --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
           --format <toon|json|yaml|md|jsonl>  Output format
           --full-output                       Show full output envelope
@@ -6538,5 +6547,86 @@ describe('--mcp', () => {
     } finally {
       spy.mockRestore()
     }
+  })
+})
+
+describe('--body', () => {
+  test('falls back to the declared output schema on hand-written commands', async () => {
+    const cli = Cli.create('test')
+    cli.command('greet', {
+      args: z.object({ name: z.string() }),
+      output: z.object({ message: z.string().describe('The greeting') }),
+      run(c) {
+        return { message: `hello ${c.args.name}` }
+      },
+    })
+    const { output, exitCode } = await serve(cli, ['greet', '--body', '--format', 'json'])
+    expect(exitCode).toBeUndefined()
+    const schema = JSON.parse(output)
+    expect(schema.properties.message.description).toBe('The greeting')
+  })
+
+  test('errors when a command declares no output schema', async () => {
+    const cli = Cli.create('test')
+    cli.command('greet', {
+      run() {
+        return { message: 'hello' }
+      },
+    })
+    const { output, exitCode } = await serve(cli, ['greet', '--body'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain("'test greet' has no documented response body")
+  })
+
+  test('flattens nested groups when mapping a group', async () => {
+    const builds = Cli.create('builds')
+    builds.command('list', {
+      output: z.object({ builds: z.array(z.string()) }),
+      run() {
+        return { builds: [] }
+      },
+    })
+    const apps = Cli.create('apps')
+    apps.command('get', {
+      output: z.object({ id: z.string() }),
+      run() {
+        return { id: 'app_1' }
+      },
+    })
+    apps.command(builds)
+    const cli = Cli.create('test')
+    cli.command(apps)
+    const { output } = await serve(cli, ['apps', '--body', '--format', 'json'])
+    const result = JSON.parse(output)
+    expect(Object.keys(result).sort()).toEqual(['builds list', 'get'])
+    expect(result['builds list'].properties.builds).toBeDefined()
+  })
+
+  test('errors when no command in the group documents a body', async () => {
+    const sub = Cli.create('sub')
+    sub.command('noop', {
+      run() {
+        return {}
+      },
+    })
+    const cli = Cli.create('test')
+    cli.command(sub)
+    const { output, exitCode } = await serve(cli, ['sub', '--body'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain("No response body is documented for 'test sub'")
+  })
+
+  test('stays the curl-style request body flag on fetch gateway commands', async () => {
+    let received: string | undefined
+    const cli = Cli.create('test')
+    cli.command('proxy', {
+      async fetch(request) {
+        received = await request.text()
+        return Response.json({ ok: true })
+      },
+    })
+    const { exitCode } = await serve(cli, ['proxy', 'users', '--body', '{"name":"Eve"}'])
+    expect(exitCode).toBeUndefined()
+    expect(received).toBe('{"name":"Eve"}')
   })
 })

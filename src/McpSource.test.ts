@@ -115,6 +115,7 @@ describe('remote MCP command sources', () => {
         --limit <number>  Result limit
 
       Global Options:
+        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope

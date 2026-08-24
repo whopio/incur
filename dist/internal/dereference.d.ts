@@ -9,4 +9,5 @@
  * resolution — no file/URL resolution, no `$id` scoping.
  */
 export declare function dereference<value>(root: value): value;
+export declare function decycle(root: unknown): unknown;
 //# sourceMappingURL=dereference.d.ts.map

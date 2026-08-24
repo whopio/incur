@@ -184,6 +184,7 @@ export declare namespace create {
         options?: options | undefined;
         /** Zod schema for the return value. */
         output?: output | undefined;
+        responseSchema?: Record<string, unknown> | undefined;
         /**
          * Controls when output data is displayed. Inherited by child commands when set on a group or root CLI.
          *
@@ -403,6 +404,7 @@ type CommandDefinition<args extends z.ZodObject<any> | undefined = undefined, en
     } | undefined;
     /** Zod schema for the command's return value. */
     output?: output | undefined;
+    responseSchema?: Record<string, unknown> | undefined;
     /**
      * Controls when output data is displayed. Inherited by child commands when set on a group.
      *
