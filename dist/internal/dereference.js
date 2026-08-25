@@ -58,12 +58,14 @@ function decycleWalk(node, ancestors) {
         return { $circular: true };
     ancestors.add(node);
     let result;
-    if (Array.isArray(node))
+    if (Array.isArray(node)) {
         result = node.map((item) => decycleWalk(item, ancestors));
+    }
     else {
         const out = {};
-        for (const key of Object.keys(node))
+        for (const key of Object.keys(node)) {
             out[key] = decycleWalk(node[key], ancestors);
+        }
         result = out;
     }
     ancestors.delete(node);

@@ -205,7 +205,7 @@ export function create(nameOrDefinition, definition) {
             'help',
             'version',
             'schema',
-            'body',
+            'responseBody',
             'filterOutput',
             'tokenLimit',
             'tokenOffset',
@@ -274,7 +274,7 @@ async function serveImpl(name, commands, argv, options = {}) {
         exit(1);
         return;
     }
-    const { fullOutput, format: formatFlag, formatExplicit, filterOutput, tokenLimit, tokenOffset, tokenCount, llms, llmsFull, mcp: mcpFlag, help, version, schema, body, configPath, configDisabled, rest, } = builtinFlags;
+    const { fullOutput, format: formatFlag, formatExplicit, filterOutput, tokenLimit, tokenOffset, tokenCount, llms, llmsFull, mcp: mcpFlag, help, version, schema, responseBody, configPath, configDisabled, rest, } = builtinFlags;
     human = tty && !formatExplicit;
     let globals = {};
     let filtered = rest;
@@ -364,7 +364,7 @@ async function serveImpl(name, commands, argv, options = {}) {
     }
     // Skills staleness check (skip for built-in commands)
     let skillsCta;
-    if (!llms && !llmsFull && !schema && !body && !help && !version) {
+    if (!llms && !llmsFull && !schema && !responseBody && !help && !version) {
         const isSkillsAdd = builtinIdx(filtered, name, 'skills') !== -1;
         const isMcpAdd = builtinIdx(filtered, name, 'mcp') !== -1;
         if (!isSkillsAdd && !isMcpAdd) {
@@ -867,51 +867,42 @@ async function serveImpl(name, commands, argv, options = {}) {
         writeln(Formatter.format(result, format));
         return;
     }
-    if (body) {
-        const tokens = filtered.filter((token) => token !== '--body');
-        const bodyResolved = tokens.length === 0
-            ? options.rootCommand
-                ? { command: options.rootCommand, path: name, rest: [] }
-                : options.rootFetch
-                    ? undefined
-                    : { help: true, path: '', description: options.description, commands }
-            : resolveCommand(commands, tokens);
-        const rootFallback = bodyResolved &&
-            'error' in bodyResolved &&
-            !bodyResolved.path &&
-            (options.rootFetch !== undefined || options.rootCommand !== undefined);
-        if (bodyResolved && !('fetchGateway' in bodyResolved) && !rootFallback) {
-            const format = formatExplicit ? formatFlag : 'toon';
-            if ('error' in bodyResolved) {
-                const parent = bodyResolved.path ? `${name} ${bodyResolved.path}` : name;
-                const suggestion = suggest(bodyResolved.error, bodyResolved.commands.keys());
-                const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : '';
-                writeln(`Error: '${bodyResolved.error}' is not a command for '${parent}'.${didYouMean}`);
-                exit(1);
-                return;
-            }
-            if ('help' in bodyResolved) {
-                const groupName = bodyResolved.path ? `${name} ${bodyResolved.path}` : name;
-                const result = {};
-                collectResponseBodySchemas(bodyResolved.commands, [], result);
-                if (Object.keys(result).length === 0) {
-                    writeln(`No response body is documented for '${groupName}'.`);
-                    exit(1);
-                    return;
-                }
-                writeln(Formatter.format(result, format));
-                return;
-            }
-            const commandName = bodyResolved.path === name ? name : `${name} ${bodyResolved.path}`;
-            const responseBody = responseBodySchema(bodyResolved.command);
-            if (!responseBody) {
-                writeln(`'${commandName}' has no documented response body.`);
-                exit(1);
-                return;
-            }
-            writeln(Formatter.format(responseBody, format));
+    if (responseBody) {
+        const format = formatExplicit ? formatFlag : 'toon';
+        if ('error' in resolved) {
+            const parent = resolved.path ? `${name} ${resolved.path}` : name;
+            const suggestion = suggest(resolved.error, resolved.commands.keys());
+            const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : '';
+            writeln(`Error: '${resolved.error}' is not a command for '${parent}'.${didYouMean}`);
+            exit(1);
             return;
         }
+        if ('fetchGateway' in resolved) {
+            writeln('--response-body is not supported for fetch commands.');
+            exit(1);
+            return;
+        }
+        if ('help' in resolved) {
+            const groupName = resolved.path ? `${name} ${resolved.path}` : name;
+            const result = {};
+            collectResponseBodySchemas(resolved.commands, [], result);
+            if (Object.keys(result).length === 0) {
+                writeln(`No response body is documented for '${groupName}'.`);
+                exit(1);
+                return;
+            }
+            writeln(Formatter.format(result, format));
+            return;
+        }
+        const commandName = resolved.path === name ? name : `${name} ${resolved.path}`;
+        const schema = responseBodySchema(resolved.command);
+        if (!schema) {
+            writeln(`'${commandName}' has no documented response body.`);
+            exit(1);
+            return;
+        }
+        writeln(Formatter.format(schema, format));
+        return;
     }
     if ('help' in resolved) {
         writeln(Help.formatRoot(`${name} ${resolved.path}`, {
@@ -1788,7 +1779,7 @@ function extractBuiltinFlags(argv, options = {}) {
     let help = false;
     let version = false;
     let schema = false;
-    let body = false;
+    let responseBody = false;
     let format = 'toon';
     let formatExplicit = false;
     let configPath;
@@ -1817,10 +1808,8 @@ function extractBuiltinFlags(argv, options = {}) {
             version = true;
         else if (token === '--schema')
             schema = true;
-        else if (token === '--body') {
-            body = true;
-            rest.push(token);
-        }
+        else if (token === '--response-body')
+            responseBody = true;
         else if (token === '--json') {
             format = 'json';
             formatExplicit = true;
@@ -1892,7 +1881,7 @@ function extractBuiltinFlags(argv, options = {}) {
         help,
         version,
         schema,
-        body,
+        responseBody,
         rest,
     };
 }

@@ -63,12 +63,12 @@ describe('formatCommand', () => {
         --limit <number>  Max PRs to return (default: 30)
 
       Global Options:
-        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -86,12 +86,12 @@ describe('formatCommand', () => {
       Usage: tool ping
 
       Global Options:
-        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -116,12 +116,12 @@ describe('formatCommand', () => {
         title  Title
 
       Global Options:
-        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -297,7 +297,6 @@ describe('formatCommand', () => {
         --env <staging|production>  Target environment (required)
 
       Global Options:
-        --body                              Show response body schema for command
         --config <path>                     Load JSON option defaults from a file
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
@@ -305,6 +304,7 @@ describe('formatCommand', () => {
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --no-config                         Disable JSON option defaults for this run
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -334,12 +334,12 @@ describe('formatRoot', () => {
         issue list  List issues
 
       Global Options:
-        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -360,12 +360,12 @@ describe('formatRoot', () => {
         ping  Health check
 
       Global Options:
-        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -390,12 +390,12 @@ describe('formatRoot', () => {
         fetch  Fetch a URL
 
       Global Options:
-        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -420,12 +420,12 @@ describe('formatRoot', () => {
         url  URL to fetch
 
       Global Options:
-        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -453,7 +453,6 @@ describe('formatRoot', () => {
         skills       Sync skill files to agents (add, list)
 
       Global Options:
-        --body                              Show response body schema for command
         --config <path>                     Load JSON option defaults from a file
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
@@ -462,6 +461,7 @@ describe('formatRoot', () => {
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
         --no-config                         Disable JSON option defaults for this run
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens

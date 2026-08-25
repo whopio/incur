@@ -1730,12 +1730,12 @@ describe('subcommands', () => {
         list
 
       Global Options:
-        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -2224,13 +2224,13 @@ describe('help', () => {
         skills       Sync skill files to agents (add, list)
 
       Global Options:
-        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -2263,13 +2263,13 @@ describe('help', () => {
         skills       Sync skill files to agents (add, list)
 
       Global Options:
-        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -2421,12 +2421,12 @@ describe('help', () => {
         name  Name
 
       Global Options:
-        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -2456,12 +2456,12 @@ describe('help', () => {
         list  List PRs
 
       Global Options:
-        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -2552,13 +2552,13 @@ describe('help', () => {
         skills       Sync skill files to agents (add, list)
 
       Global Options:
-        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -2585,12 +2585,12 @@ describe('help', () => {
       Run "tool status" to check deployment progress.
 
       Global Options:
-        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -2703,12 +2703,12 @@ describe('env', () => {
       Usage: test deploy
 
       Global Options:
-        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -2742,12 +2742,12 @@ describe('env', () => {
         Usage: test deploy
 
         Global Options:
-          --body                              Show response body schema for command
           --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
           --format <toon|json|yaml|md|jsonl>  Output format
           --full-output                       Show full output envelope
           --help                              Show help
           --llms, --llms-full                 Print LLM-readable manifest
+          --response-body                     Show response body schema for command
           --schema                            Show JSON Schema for command
           --token-count                       Print token count of output (instead of output)
           --token-limit <n>                   Limit output to n tokens
@@ -6550,7 +6550,7 @@ describe('--mcp', () => {
   })
 })
 
-describe('--body', () => {
+describe('--response-body', () => {
   test('falls back to the declared output schema on hand-written commands', async () => {
     const cli = Cli.create('test')
     cli.command('greet', {
@@ -6560,7 +6560,7 @@ describe('--body', () => {
         return { message: `hello ${c.args.name}` }
       },
     })
-    const { output, exitCode } = await serve(cli, ['greet', '--body', '--format', 'json'])
+    const { output, exitCode } = await serve(cli, ['greet', '--response-body', '--format', 'json'])
     expect(exitCode).toBeUndefined()
     const schema = JSON.parse(output)
     expect(schema.properties.message.description).toBe('The greeting')
@@ -6573,7 +6573,7 @@ describe('--body', () => {
         return { message: 'hello' }
       },
     })
-    const { output, exitCode } = await serve(cli, ['greet', '--body'])
+    const { output, exitCode } = await serve(cli, ['greet', '--response-body'])
     expect(exitCode).toBe(1)
     expect(output).toContain("'test greet' has no documented response body")
   })
@@ -6596,7 +6596,7 @@ describe('--body', () => {
     apps.command(builds)
     const cli = Cli.create('test')
     cli.command(apps)
-    const { output } = await serve(cli, ['apps', '--body', '--format', 'json'])
+    const { output } = await serve(cli, ['apps', '--response-body', '--format', 'json'])
     const result = JSON.parse(output)
     expect(Object.keys(result).sort()).toEqual(['builds list', 'get'])
     expect(result['builds list'].properties.builds).toBeDefined()
@@ -6611,22 +6611,20 @@ describe('--body', () => {
     })
     const cli = Cli.create('test')
     cli.command(sub)
-    const { output, exitCode } = await serve(cli, ['sub', '--body'])
+    const { output, exitCode } = await serve(cli, ['sub', '--response-body'])
     expect(exitCode).toBe(1)
     expect(output).toContain("No response body is documented for 'test sub'")
   })
 
-  test('stays the curl-style request body flag on fetch gateway commands', async () => {
-    let received: string | undefined
+  test('is rejected on fetch gateway commands', async () => {
     const cli = Cli.create('test')
     cli.command('proxy', {
-      async fetch(request) {
-        received = await request.text()
+      async fetch() {
         return Response.json({ ok: true })
       },
     })
-    const { exitCode } = await serve(cli, ['proxy', 'users', '--body', '{"name":"Eve"}'])
-    expect(exitCode).toBeUndefined()
-    expect(received).toBe('{"name":"Eve"}')
+    const { output, exitCode } = await serve(cli, ['proxy', 'users', '--response-body'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain('--response-body is not supported for fetch commands.')
   })
 })

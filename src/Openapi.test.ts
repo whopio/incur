@@ -604,12 +604,12 @@ describe('cli integration', () => {
         --x-api-key <string>  Access token
 
       Global Options:
-        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -717,12 +717,12 @@ describe('cli integration', () => {
         --authorization <string>  Bearer credential
 
       Global Options:
-        --body                              Show response body schema for command
         --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
         --format <toon|json|yaml|md|jsonl>  Output format
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -1203,11 +1203,11 @@ describe('responseSchema', () => {
     })
   }
 
-  test('--body prints the response schema for a command', async () => {
+  test('--response-body prints the response schema for a command', async () => {
     const { output, exitCode } = await serve(createCli(), [
       'cards',
       'getCard',
-      '--body',
+      '--response-body',
       '--format',
       'json',
     ])
@@ -1218,38 +1218,42 @@ describe('responseSchema', () => {
     })
   })
 
-  test('--body ignores trailing positional arguments', async () => {
+  test('--response-body ignores trailing positional arguments', async () => {
     const { output } = await serve(createCli(), [
       'cards',
       'getCard',
       'icrd_123',
-      '--body',
+      '--response-body',
       '--format',
       'json',
     ])
     expect(json(output).properties.id).toEqual({ type: 'string' })
   })
 
-  test('--body on a group maps every documented command to its schema', async () => {
-    const { output } = await serve(createCli(), ['cards', '--body', '--format', 'json'])
+  test('--response-body on a group maps every documented command to its schema', async () => {
+    const { output } = await serve(createCli(), ['cards', '--response-body', '--format', 'json'])
     const result = json(output)
     expect(Object.keys(result).sort()).toEqual(['createCard', 'getCard'])
     expect(result.getCard.properties.id).toEqual({ type: 'string' })
   })
 
-  test('--body errors for a command without a documented body', async () => {
-    const { output, exitCode } = await serve(createCli(), ['cards', 'listCards', '--body'])
+  test('--response-body errors for a command without a documented body', async () => {
+    const { output, exitCode } = await serve(createCli(), ['cards', 'listCards', '--response-body'])
     expect(exitCode).toBe(1)
     expect(output).toContain('has no documented response body')
   })
 
-  test('--body errors for an unknown command', async () => {
-    const { output, exitCode } = await serve(createCli(), ['cards', 'frobnicate', '--body'])
+  test('--response-body errors for an unknown command', async () => {
+    const { output, exitCode } = await serve(createCli(), [
+      'cards',
+      'frobnicate',
+      '--response-body',
+    ])
     expect(exitCode).toBe(1)
     expect(output).toContain("'frobnicate' is not a command")
   })
 
-  test('--body breaks circular response schemas', async () => {
+  test('--response-body breaks circular response schemas', async () => {
     const circularSpec = {
       openapi: '3.0.0',
       info: { title: 'Test API', version: '1.0.0' },
@@ -1285,7 +1289,7 @@ describe('responseSchema', () => {
     const { output, exitCode } = await serve(cli, [
       'nodes',
       'getNode',
-      '--body',
+      '--response-body',
       '--format',
       'json',
     ])

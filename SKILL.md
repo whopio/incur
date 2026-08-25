@@ -519,11 +519,11 @@ tool install --schema
 
 Use `--schema --format json` for machine-readable output. Not supported on fetch commands.
 
-Use `--body` to print only the response body schema: the OpenAPI success response schema (with `$ref`s inlined) on generated commands, or the declared `output` schema on hand-written commands. On a group it prints a map of every subcommand's response schema. Raw fetch commands keep `--body` as the curl-style request body flag.
+Use `--response-body` to print only the response body schema: the OpenAPI success response schema (with `$ref`s inlined) on generated commands, or the declared `output` schema on hand-written commands. On a group it prints a map of every subcommand's response schema. Raw fetch commands do not support it; `--body` there remains the curl-style request body flag.
 
 ```sh
-tool install --body            # response body schema for one command
-tool users --body              # response schema for every command in the group
+tool install --response-body   # response body schema for one command
+tool users --response-body     # response schema for every command in the group
 ```
 
 ### TTY detection
