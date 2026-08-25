@@ -22,6 +22,7 @@ import {
 } from './internal/command.js'
 import * as Command from './internal/command.js'
 import { formatCtaBlock, type FormattedCta, type FormattedCtaBlock } from './internal/cta.js'
+import { decycle } from './internal/dereference.js'
 import { isRecord, suggest, toKebab } from './internal/helpers.js'
 import * as Json from './internal/json.js'
 import { detectRunner } from './internal/pm.js'
@@ -429,6 +430,7 @@ export function create(
       'help',
       'version',
       'schema',
+      'responseBody',
       'filterOutput',
       'tokenLimit',
       'tokenOffset',
@@ -537,6 +539,7 @@ export declare namespace create {
     options?: options | undefined
     /** Zod schema for the return value. */
     output?: output | undefined
+    responseSchema?: Record<string, unknown> | undefined
     /**
      * Controls when output data is displayed. Inherited by child commands when set on a group or root CLI.
      *
@@ -698,6 +701,7 @@ async function serveImpl(
     help,
     version,
     schema,
+    responseBody,
     configPath,
     configDisabled,
     rest,
@@ -794,7 +798,7 @@ async function serveImpl(
 
   // Skills staleness check (skip for built-in commands)
   let skillsCta: FormattedCtaBlock | undefined
-  if (!llms && !llmsFull && !schema && !help && !version) {
+  if (!llms && !llmsFull && !schema && !responseBody && !help && !version) {
     const isSkillsAdd = builtinIdx(filtered, name, 'skills') !== -1
     const isMcpAdd = builtinIdx(filtered, name, 'mcp') !== -1
     if (!isSkillsAdd && !isMcpAdd) {
@@ -1343,6 +1347,45 @@ async function serveImpl(
     if (cmd.output) result.output = Schema.toJsonSchema(cmd.output)
     if (options.globals?.schema) result.globals = Schema.toJsonSchema(options.globals.schema)
     writeln(Formatter.format(result, format))
+    return
+  }
+
+  if (responseBody) {
+    const format = formatExplicit ? formatFlag : 'toon'
+    if ('error' in resolved) {
+      const parent = resolved.path ? `${name} ${resolved.path}` : name
+      const suggestion = suggest(resolved.error, resolved.commands.keys())
+      const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : ''
+      writeln(`Error: '${resolved.error}' is not a command for '${parent}'.${didYouMean}`)
+      exit(1)
+      return
+    }
+    if ('fetchGateway' in resolved) {
+      writeln('--response-body is not supported for fetch commands.')
+      exit(1)
+      return
+    }
+    if ('help' in resolved) {
+      const groupName = resolved.path ? `${name} ${resolved.path}` : name
+      const result: Record<string, unknown> = {}
+      collectResponseBodySchemas(resolved.commands, [], result)
+      if (Object.keys(result).length === 0) {
+        writeln(`No response body is documented for '${groupName}'.`)
+        exit(1)
+        return
+      }
+      writeln(Formatter.format(result, format))
+      return
+    }
+
+    const commandName = resolved.path === name ? name : `${name} ${resolved.path}`
+    const schema = responseBodySchema(resolved.command)
+    if (!schema) {
+      writeln(`'${commandName}' has no documented response body.`)
+      exit(1)
+      return
+    }
+    writeln(Formatter.format(schema, format))
     return
   }
 
@@ -2497,6 +2540,7 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
   let help = false
   let version = false
   let schema = false
+  let responseBody = false
   let format: Formatter.Format = 'toon'
   let formatExplicit = false
   let configPath: string | undefined
@@ -2520,6 +2564,7 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
     else if (token === '--help' || token === '-h') help = true
     else if (token === '--version') version = true
     else if (token === '--schema') schema = true
+    else if (token === '--response-body') responseBody = true
     else if (token === '--json') {
       format = 'json'
       formatExplicit = true
@@ -2582,6 +2627,7 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
     help,
     version,
     schema,
+    responseBody,
     rest,
   }
 }
@@ -3024,6 +3070,28 @@ type InternalAlias = {
 /** @internal Type guard for alias entries. */
 function isAlias(entry: CommandEntry): entry is InternalAlias {
   return '_alias' in entry
+}
+
+function responseBodySchema(command: CommandDefinition<any, any, any>): unknown {
+  if (command.responseSchema) return decycle(command.responseSchema)
+  if (command.output) return Schema.toJsonSchema(command.output)
+  return undefined
+}
+
+function collectResponseBodySchemas(
+  commands: Map<string, CommandEntry>,
+  prefix: string[],
+  out: Record<string, unknown>,
+) {
+  for (const [name, entry] of commands) {
+    if (isAlias(entry) || isFetchGateway(entry)) continue
+    if (isGroup(entry)) {
+      collectResponseBodySchemas(entry.commands, [...prefix, name], out)
+      continue
+    }
+    const schema = responseBodySchema(entry)
+    if (schema) out[[...prefix, name].join(' ')] = schema
+  }
 }
 
 /** @internal Follows an alias entry to its canonical target. Returns the entry unchanged if not an alias. */
@@ -3724,6 +3792,7 @@ type CommandDefinition<
     | undefined
   /** Zod schema for the command's return value. */
   output?: output | undefined
+  responseSchema?: Record<string, unknown> | undefined
   /**
    * Controls when output data is displayed. Inherited by child commands when set on a group.
    *

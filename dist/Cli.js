@@ -12,6 +12,7 @@ import * as Help from './Help.js';
 import { builtinCommands, findBuiltin, findBuiltinSubcommand, shells, } from './internal/command.js';
 import * as Command from './internal/command.js';
 import { formatCtaBlock } from './internal/cta.js';
+import { decycle } from './internal/dereference.js';
 import { isRecord, suggest, toKebab } from './internal/helpers.js';
 import * as Json from './internal/json.js';
 import { detectRunner } from './internal/pm.js';
@@ -204,6 +205,7 @@ export function create(nameOrDefinition, definition) {
             'help',
             'version',
             'schema',
+            'responseBody',
             'filterOutput',
             'tokenLimit',
             'tokenOffset',
@@ -272,7 +274,7 @@ async function serveImpl(name, commands, argv, options = {}) {
         exit(1);
         return;
     }
-    const { fullOutput, format: formatFlag, formatExplicit, filterOutput, tokenLimit, tokenOffset, tokenCount, llms, llmsFull, mcp: mcpFlag, help, version, schema, configPath, configDisabled, rest, } = builtinFlags;
+    const { fullOutput, format: formatFlag, formatExplicit, filterOutput, tokenLimit, tokenOffset, tokenCount, llms, llmsFull, mcp: mcpFlag, help, version, schema, responseBody, configPath, configDisabled, rest, } = builtinFlags;
     human = tty && !formatExplicit;
     let globals = {};
     let filtered = rest;
@@ -362,7 +364,7 @@ async function serveImpl(name, commands, argv, options = {}) {
     }
     // Skills staleness check (skip for built-in commands)
     let skillsCta;
-    if (!llms && !llmsFull && !schema && !help && !version) {
+    if (!llms && !llmsFull && !schema && !responseBody && !help && !version) {
         const isSkillsAdd = builtinIdx(filtered, name, 'skills') !== -1;
         const isMcpAdd = builtinIdx(filtered, name, 'mcp') !== -1;
         if (!isSkillsAdd && !isMcpAdd) {
@@ -863,6 +865,43 @@ async function serveImpl(name, commands, argv, options = {}) {
         if (options.globals?.schema)
             result.globals = Schema.toJsonSchema(options.globals.schema);
         writeln(Formatter.format(result, format));
+        return;
+    }
+    if (responseBody) {
+        const format = formatExplicit ? formatFlag : 'toon';
+        if ('error' in resolved) {
+            const parent = resolved.path ? `${name} ${resolved.path}` : name;
+            const suggestion = suggest(resolved.error, resolved.commands.keys());
+            const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : '';
+            writeln(`Error: '${resolved.error}' is not a command for '${parent}'.${didYouMean}`);
+            exit(1);
+            return;
+        }
+        if ('fetchGateway' in resolved) {
+            writeln('--response-body is not supported for fetch commands.');
+            exit(1);
+            return;
+        }
+        if ('help' in resolved) {
+            const groupName = resolved.path ? `${name} ${resolved.path}` : name;
+            const result = {};
+            collectResponseBodySchemas(resolved.commands, [], result);
+            if (Object.keys(result).length === 0) {
+                writeln(`No response body is documented for '${groupName}'.`);
+                exit(1);
+                return;
+            }
+            writeln(Formatter.format(result, format));
+            return;
+        }
+        const commandName = resolved.path === name ? name : `${name} ${resolved.path}`;
+        const schema = responseBodySchema(resolved.command);
+        if (!schema) {
+            writeln(`'${commandName}' has no documented response body.`);
+            exit(1);
+            return;
+        }
+        writeln(Formatter.format(schema, format));
         return;
     }
     if ('help' in resolved) {
@@ -1740,6 +1779,7 @@ function extractBuiltinFlags(argv, options = {}) {
     let help = false;
     let version = false;
     let schema = false;
+    let responseBody = false;
     let format = 'toon';
     let formatExplicit = false;
     let configPath;
@@ -1768,6 +1808,8 @@ function extractBuiltinFlags(argv, options = {}) {
             version = true;
         else if (token === '--schema')
             schema = true;
+        else if (token === '--response-body')
+            responseBody = true;
         else if (token === '--json') {
             format = 'json';
             formatExplicit = true;
@@ -1839,6 +1881,7 @@ function extractBuiltinFlags(argv, options = {}) {
         help,
         version,
         schema,
+        responseBody,
         rest,
     };
 }
@@ -2171,6 +2214,26 @@ function isFetchGateway(entry) {
 /** @internal Type guard for alias entries. */
 function isAlias(entry) {
     return '_alias' in entry;
+}
+function responseBodySchema(command) {
+    if (command.responseSchema)
+        return decycle(command.responseSchema);
+    if (command.output)
+        return Schema.toJsonSchema(command.output);
+    return undefined;
+}
+function collectResponseBodySchemas(commands, prefix, out) {
+    for (const [name, entry] of commands) {
+        if (isAlias(entry) || isFetchGateway(entry))
+            continue;
+        if (isGroup(entry)) {
+            collectResponseBodySchemas(entry.commands, [...prefix, name], out);
+            continue;
+        }
+        const schema = responseBodySchema(entry);
+        if (schema)
+            out[[...prefix, name].join(' ')] = schema;
+    }
 }
 /** @internal Follows an alias entry to its canonical target. Returns the entry unchanged if not an alias. */
 function resolveAlias(commands, entry) {

@@ -68,6 +68,7 @@ describe('formatCommand', () => {
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -90,6 +91,7 @@ describe('formatCommand', () => {
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -119,6 +121,7 @@ describe('formatCommand', () => {
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -301,6 +304,7 @@ describe('formatCommand', () => {
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
         --no-config                         Disable JSON option defaults for this run
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -335,6 +339,7 @@ describe('formatRoot', () => {
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -360,6 +365,7 @@ describe('formatRoot', () => {
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -389,6 +395,7 @@ describe('formatRoot', () => {
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -418,6 +425,7 @@ describe('formatRoot', () => {
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -453,6 +461,7 @@ describe('formatRoot', () => {
         --llms, --llms-full                 Print LLM-readable manifest
         --mcp                               Start as MCP stdio server
         --no-config                         Disable JSON option defaults for this run
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens

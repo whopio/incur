@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 
-import { dereference } from './dereference.js'
+import { decycle, dereference } from './dereference.js'
 
 describe('dereference', () => {
   test('resolves basic $ref', () => {
@@ -688,5 +688,39 @@ describe('dereference', () => {
     const result = dereference(spec) as any
     expect(result.direct.schema.inner.type).toBe('object')
     expect(result.direct.schema.inner.properties.child).toBe(result.direct.schema.inner)
+  })
+})
+
+describe('decycle', () => {
+  test('returns acyclic values unchanged', () => {
+    expect(decycle(1)).toBe(1)
+    expect(decycle(null)).toBe(null)
+    expect(decycle({ a: [1, { b: 'c' }] })).toEqual({ a: [1, { b: 'c' }] })
+  })
+
+  test('replaces circular back-edges with { $circular: true }', () => {
+    const spec = {
+      components: {
+        schemas: {
+          Node: {
+            type: 'object',
+            properties: { child: { $ref: '#/components/schemas/Node' } },
+          },
+        },
+      },
+    }
+    const node = (dereference(spec) as any).components.schemas.Node
+    const child = node.properties.child
+    expect(child.properties.child).toBe(child)
+    const result = decycle(node) as any
+    expect(result.properties.child.properties.child).toEqual({ $circular: true })
+    expect(JSON.stringify(result)).toBeTypeOf('string')
+  })
+
+  test('keeps shared non-circular subschemas', () => {
+    const shared = { type: 'string' }
+    const result = decycle({ a: shared, b: shared }) as any
+    expect(result.a).toEqual({ type: 'string' })
+    expect(result.b).toEqual({ type: 'string' })
   })
 })

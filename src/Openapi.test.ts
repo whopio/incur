@@ -609,6 +609,7 @@ describe('cli integration', () => {
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -721,6 +722,7 @@ describe('cli integration', () => {
         --full-output                       Show full output envelope
         --help                              Show help
         --llms, --llms-full                 Print LLM-readable manifest
+        --response-body                     Show response body schema for command
         --schema                            Show JSON Schema for command
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
@@ -1106,5 +1108,192 @@ describe('basePath', () => {
     })
     const { output } = await serve(cli, ['api', 'healthCheck', '--format', 'json'])
     expect(json(output)).toEqual({ ok: true })
+  })
+})
+
+describe('responseSchema', () => {
+  const refSpec = {
+    openapi: '3.0.0',
+    info: { title: 'Test API', version: '1.0.0' },
+    components: {
+      schemas: {
+        Card: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            secrets: { $ref: '#/components/schemas/CardSecrets' },
+          },
+        },
+        CardSecrets: {
+          type: 'object',
+          properties: { number: { type: 'string' } },
+        },
+      },
+    },
+    paths: {
+      '/cards/{id}': {
+        get: {
+          operationId: 'getCard',
+          summary: 'Get a card',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            '200': {
+              description: 'Card',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/Card' } },
+              },
+            },
+          },
+        },
+      },
+      '/cards': {
+        post: {
+          operationId: 'createCard',
+          summary: 'Create a card',
+          responses: {
+            '204': { description: 'No JSON body' },
+            '201': {
+              description: 'Created',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/Card' } },
+              },
+            },
+          },
+        },
+        get: {
+          operationId: 'listCards',
+          summary: 'List cards',
+          responses: { '200': { description: 'No documented body' } },
+        },
+      },
+    },
+  }
+
+  test('attaches the dereferenced success response schema', async () => {
+    const commands = await Openapi.generateCommands(refSpec, app.fetch)
+    const cmd = commands.get('getCard')!
+    if ('_group' in cmd) throw new Error('expected getCard command')
+    expect(cmd.responseSchema).toEqual({
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        secrets: { type: 'object', properties: { number: { type: 'string' } } },
+      },
+    })
+  })
+
+  test('uses the lowest 2xx response documenting a JSON body', async () => {
+    const commands = await Openapi.generateCommands(refSpec, app.fetch)
+    const cmd = commands.get('createCard')!
+    if ('_group' in cmd) throw new Error('expected createCard command')
+    expect((cmd.responseSchema as any).properties.id).toEqual({ type: 'string' })
+  })
+
+  test('is undefined when no 2xx response documents a JSON body', async () => {
+    const commands = await Openapi.generateCommands(refSpec, app.fetch)
+    const cmd = commands.get('listCards')!
+    if ('_group' in cmd) throw new Error('expected listCards command')
+    expect(cmd.responseSchema).toBeUndefined()
+  })
+
+  function createCli() {
+    return Cli.create('test', { description: 'test' }).command('cards', {
+      fetch: app.fetch,
+      openapi: refSpec,
+    })
+  }
+
+  test('--response-body prints the response schema for a command', async () => {
+    const { output, exitCode } = await serve(createCli(), [
+      'cards',
+      'getCard',
+      '--response-body',
+      '--format',
+      'json',
+    ])
+    expect(exitCode).toBeUndefined()
+    expect(json(output).properties.secrets).toEqual({
+      type: 'object',
+      properties: { number: { type: 'string' } },
+    })
+  })
+
+  test('--response-body ignores trailing positional arguments', async () => {
+    const { output } = await serve(createCli(), [
+      'cards',
+      'getCard',
+      'icrd_123',
+      '--response-body',
+      '--format',
+      'json',
+    ])
+    expect(json(output).properties.id).toEqual({ type: 'string' })
+  })
+
+  test('--response-body on a group maps every documented command to its schema', async () => {
+    const { output } = await serve(createCli(), ['cards', '--response-body', '--format', 'json'])
+    const result = json(output)
+    expect(Object.keys(result).sort()).toEqual(['createCard', 'getCard'])
+    expect(result.getCard.properties.id).toEqual({ type: 'string' })
+  })
+
+  test('--response-body errors for a command without a documented body', async () => {
+    const { output, exitCode } = await serve(createCli(), ['cards', 'listCards', '--response-body'])
+    expect(exitCode).toBe(1)
+    expect(output).toContain('has no documented response body')
+  })
+
+  test('--response-body errors for an unknown command', async () => {
+    const { output, exitCode } = await serve(createCli(), [
+      'cards',
+      'frobnicate',
+      '--response-body',
+    ])
+    expect(exitCode).toBe(1)
+    expect(output).toContain("'frobnicate' is not a command")
+  })
+
+  test('--response-body breaks circular response schemas', async () => {
+    const circularSpec = {
+      openapi: '3.0.0',
+      info: { title: 'Test API', version: '1.0.0' },
+      components: {
+        schemas: {
+          Node: {
+            type: 'object',
+            properties: { child: { $ref: '#/components/schemas/Node' } },
+          },
+        },
+      },
+      paths: {
+        '/nodes/{id}': {
+          get: {
+            operationId: 'getNode',
+            parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+            responses: {
+              '200': {
+                description: 'Node',
+                content: {
+                  'application/json': { schema: { $ref: '#/components/schemas/Node' } },
+                },
+              },
+            },
+          },
+        },
+      },
+    }
+    const cli = Cli.create('test', { description: 'test' }).command('nodes', {
+      fetch: app.fetch,
+      openapi: circularSpec,
+    })
+    const { output, exitCode } = await serve(cli, [
+      'nodes',
+      'getNode',
+      '--response-body',
+      '--format',
+      'json',
+    ])
+    expect(exitCode).toBeUndefined()
+    expect(json(output).properties.child).toEqual({ $circular: true })
   })
 })
