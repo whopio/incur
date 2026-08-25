@@ -60,13 +60,18 @@ export function decycle(root: unknown): unknown {
 function decycleWalk(node: unknown, ancestors: Set<object>): unknown {
   if (typeof node !== 'object' || node === null) return node
   if (ancestors.has(node)) return { $circular: true }
+
   ancestors.add(node)
+
   let result: unknown
-  if (Array.isArray(node)) result = node.map((item) => decycleWalk(item, ancestors))
-  else {
+  if (Array.isArray(node)) {
+    result = node.map((item) => decycleWalk(item, ancestors))
+  } else {
     const out: Record<string, unknown> = {}
-    for (const key of Object.keys(node))
+    for (const key of Object.keys(node)) {
       out[key] = decycleWalk((node as Record<string, unknown>)[key], ancestors)
+    }
+
     result = out
   }
   ancestors.delete(node)

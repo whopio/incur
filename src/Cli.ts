@@ -1360,6 +1360,7 @@ async function serveImpl(
             ? undefined
             : { help: true as const, path: '', description: options.description, commands }
         : resolveCommand(commands, tokens)
+
     const rootFallback =
       bodyResolved &&
       'error' in bodyResolved &&
@@ -1372,6 +1373,7 @@ async function serveImpl(
         const parent = bodyResolved.path ? `${name} ${bodyResolved.path}` : name
         const suggestion = suggest(bodyResolved.error, bodyResolved.commands.keys())
         const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : ''
+
         writeln(`Error: '${bodyResolved.error}' is not a command for '${parent}'.${didYouMean}`)
         exit(1)
         return
@@ -1379,22 +1381,28 @@ async function serveImpl(
       if ('help' in bodyResolved) {
         const groupName = bodyResolved.path ? `${name} ${bodyResolved.path}` : name
         const result: Record<string, unknown> = {}
+
         collectResponseBodySchemas(bodyResolved.commands, [], result)
+
         if (Object.keys(result).length === 0) {
           writeln(`No response body is documented for '${groupName}'.`)
           exit(1)
           return
         }
+
         writeln(Formatter.format(result, format))
         return
       }
+
       const commandName = bodyResolved.path === name ? name : `${name} ${bodyResolved.path}`
       const responseBody = responseBodySchema(bodyResolved.command)
+
       if (!responseBody) {
         writeln(`'${commandName}' has no documented response body.`)
         exit(1)
         return
       }
+
       writeln(Formatter.format(responseBody, format))
       return
     }
