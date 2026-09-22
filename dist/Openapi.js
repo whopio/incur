@@ -287,7 +287,7 @@ export async function generateCommands(spec, fetch, options = {}) {
             usedOptionNames.add(optionName);
         }
         const optionsSchema = Object.keys(optShape).length > 0 ? z.object(optShape) : undefined;
-        setCommand(commands, segments, {
+        const command = {
             description: op.summary ?? op.description,
             mcp: {
                 annotations: mcpAnnotations(method),
@@ -309,9 +309,54 @@ export async function generateCommands(spec, fetch, options = {}) {
                 queryParams,
                 bodyProps,
             }),
-        });
+        };
+        const output = responseSchema(op);
+        if (output)
+            command.output = output;
+        setCommand(commands, segments, command);
     }
     return commands;
+}
+/**
+ * The operation's success response body, so a generated command carries `output` the way a hand-written one
+ * can: `--schema` prints it, the MCP tool declares it as `outputSchema`, the generated skill documents it, and
+ * `fromCli` round-trips it. The first declared success status wins (`200`, `201`, any other `2XX`, then
+ * `default`), JSON content only. The schema is the spec's own, already dereferenced, kept as JSON Schema rather
+ * than converted to Zod: the conversion is lossy and costs more than the command being run when a spec has
+ * hundreds of operations. A response whose schema refers to itself is skipped, since it could not be printed.
+ * `output` describes a result; nothing validates against it.
+ */
+function responseSchema(op) {
+    const responses = op.responses ?? {};
+    const keys = Object.keys(responses);
+    const key = keys.find((k) => k === '200' || k === '201') ??
+        keys.find((k) => /^2(\d\d|xx)$/i.test(k)) ??
+        keys.find((k) => k === 'default');
+    if (!key)
+        return undefined;
+    const response = responses[key];
+    const schema = response?.content?.['application/json']?.schema;
+    if (!schema || typeof schema !== 'object' || !acyclic(schema))
+        return undefined;
+    return schema;
+}
+/** Whether an object graph can be serialized: no object reachable from itself. */
+function acyclic(root) {
+    const path = new Set();
+    const visit = (node) => {
+        if (typeof node !== 'object' || node === null)
+            return true;
+        if (path.has(node))
+            return false;
+        path.add(node);
+        const children = Array.isArray(node) ? node : Object.values(node);
+        for (const child of children)
+            if (!visit(child))
+                return false;
+        path.delete(node);
+        return true;
+    };
+    return visit(root);
 }
 function mcpAnnotations(method) {
     const readOnly = ['get', 'head', 'options', 'trace'].includes(method);

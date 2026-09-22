@@ -8,13 +8,14 @@ import type { Handler as MiddlewareHandler } from './middleware.js';
 import * as Openapi from './Openapi.js';
 export type { MiddlewareHandler };
 import type { Register } from './Register.js';
+import * as Schema from './Schema.js';
 import * as Skill from './Skill.js';
 /** A CLI application instance. Also used as a command group when mounted on a parent CLI. */
 export type Cli<commands extends CommandsMap = {}, vars extends z.ZodObject<any> | undefined = undefined, env extends z.ZodObject<any> | undefined = undefined, globals extends z.ZodObject<any> | undefined = undefined> = {
     /** Registers a root command or mounts a sub-CLI as a command group. */
     command: {
         /** Registers a command. Returns the CLI instance for chaining. */
-        <const name extends string, const args extends z.ZodObject<any> | undefined = undefined, const cmdEnv extends z.ZodObject<any> | undefined = undefined, const options extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | undefined = undefined>(name: name, definition: CommandDefinition<args, cmdEnv, options, output, vars, env>): Cli<commands & {
+        <const name extends string, const args extends z.ZodObject<any> | undefined = undefined, const cmdEnv extends z.ZodObject<any> | undefined = undefined, const options extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | Schema.JsonSchema | undefined = undefined>(name: name, definition: CommandDefinition<args, cmdEnv, options, output, vars, env>): Cli<commands & {
             [key in name]: {
                 args: InferOutput<args>;
                 options: InferOutput<options>;
@@ -106,7 +107,7 @@ export type Cta<commands extends CommandsMap = Commands> = ([keyof commands] ext
     description?: string | undefined;
 });
 /** Creates a CLI with a root handler. Can still register subcommands which take precedence. */
-export declare function create<const args extends z.ZodObject<any> | undefined = undefined, const env extends z.ZodObject<any> | undefined = undefined, const opts extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | undefined = undefined, const vars extends z.ZodObject<any> | undefined = undefined, const globals extends z.ZodObject<any> | undefined = undefined>(name: string, definition: create.Options<args, env, opts, output, vars, globals> & {
+export declare function create<const args extends z.ZodObject<any> | undefined = undefined, const env extends z.ZodObject<any> | undefined = undefined, const opts extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | Schema.JsonSchema | undefined = undefined, const vars extends z.ZodObject<any> | undefined = undefined, const globals extends z.ZodObject<any> | undefined = undefined>(name: string, definition: create.Options<args, env, opts, output, vars, globals> & {
     run: Function;
 }): Cli<{
     [key in typeof name]: {
@@ -115,9 +116,9 @@ export declare function create<const args extends z.ZodObject<any> | undefined =
     };
 }, vars, env, globals>;
 /** Creates a router CLI that registers subcommands. */
-export declare function create<const args extends z.ZodObject<any> | undefined = undefined, const env extends z.ZodObject<any> | undefined = undefined, const opts extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | undefined = undefined, const vars extends z.ZodObject<any> | undefined = undefined, const globals extends z.ZodObject<any> | undefined = undefined>(name: string, definition?: create.Options<args, env, opts, output, vars, globals>): Cli<{}, vars, env, globals>;
+export declare function create<const args extends z.ZodObject<any> | undefined = undefined, const env extends z.ZodObject<any> | undefined = undefined, const opts extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | Schema.JsonSchema | undefined = undefined, const vars extends z.ZodObject<any> | undefined = undefined, const globals extends z.ZodObject<any> | undefined = undefined>(name: string, definition?: create.Options<args, env, opts, output, vars, globals>): Cli<{}, vars, env, globals>;
 /** Creates a CLI with a root handler from a single options object. Can still register subcommands. */
-export declare function create<const args extends z.ZodObject<any> | undefined = undefined, const env extends z.ZodObject<any> | undefined = undefined, const opts extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | undefined = undefined, const vars extends z.ZodObject<any> | undefined = undefined, const globals extends z.ZodObject<any> | undefined = undefined>(definition: create.Options<args, env, opts, output, vars, globals> & {
+export declare function create<const args extends z.ZodObject<any> | undefined = undefined, const env extends z.ZodObject<any> | undefined = undefined, const opts extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | Schema.JsonSchema | undefined = undefined, const vars extends z.ZodObject<any> | undefined = undefined, const globals extends z.ZodObject<any> | undefined = undefined>(definition: create.Options<args, env, opts, output, vars, globals> & {
     name: string;
     run: Function;
 }): Cli<{
@@ -127,12 +128,12 @@ export declare function create<const args extends z.ZodObject<any> | undefined =
     };
 }, vars, env, globals>;
 /** Creates a router CLI from a single options object (e.g. package.json). */
-export declare function create<const args extends z.ZodObject<any> | undefined = undefined, const env extends z.ZodObject<any> | undefined = undefined, const opts extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | undefined = undefined, const vars extends z.ZodObject<any> | undefined = undefined, const globals extends z.ZodObject<any> | undefined = undefined>(definition: create.Options<args, env, opts, output, vars, globals> & {
+export declare function create<const args extends z.ZodObject<any> | undefined = undefined, const env extends z.ZodObject<any> | undefined = undefined, const opts extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | Schema.JsonSchema | undefined = undefined, const vars extends z.ZodObject<any> | undefined = undefined, const globals extends z.ZodObject<any> | undefined = undefined>(definition: create.Options<args, env, opts, output, vars, globals> & {
     name: string;
 }): Cli<{}, vars, env, globals>;
 export declare namespace create {
     /** Options for creating a CLI. Provide `run` for a leaf CLI, omit it for a router. */
-    type Options<args extends z.ZodObject<any> | undefined = undefined, env extends z.ZodObject<any> | undefined = undefined, options extends z.ZodObject<any> | undefined = undefined, output extends z.ZodType | undefined = undefined, vars extends z.ZodObject<any> | undefined = undefined, globals extends z.ZodObject<any> | undefined = undefined> = {
+    type Options<args extends z.ZodObject<any> | undefined = undefined, env extends z.ZodObject<any> | undefined = undefined, options extends z.ZodObject<any> | undefined = undefined, output extends z.ZodType | Schema.JsonSchema | undefined = undefined, vars extends z.ZodObject<any> | undefined = undefined, globals extends z.ZodObject<any> | undefined = undefined> = {
         /** Map of option names to single-char aliases. */
         alias?: options extends z.ZodObject<any> ? Partial<Record<keyof z.output<options>, string>> : Record<string, string> | undefined;
         /** Alternative binary names for this CLI (e.g. shorter aliases in package.json `bin`). Shell completions are registered for all names. */
@@ -182,7 +183,10 @@ export declare namespace create {
         globals?: globals | undefined;
         /** Zod schema for named options/flags. */
         options?: options | undefined;
-        /** Zod schema for the return value. */
+        /**
+         * Schema for the return value: a Zod schema, which also types what `run` returns, or a JSON Schema object,
+         * as a command generated from an OpenAPI operation carries. Describes the result; never validates it.
+         */
         output?: output | undefined;
         /**
          * Controls when output data is displayed. Inherited by child commands when set on a group or root CLI.
@@ -283,7 +287,7 @@ export type CommandsMap = Record<string, {
     options: Record<string, unknown>;
 }>;
 /** @internal Entry stored in a command map — either a leaf definition, a group, or a fetch gateway. */
-type CommandEntry = CommandDefinition<any, any, any> | InternalGroup | InternalFetchGateway | InternalAlias;
+type CommandEntry = CommandDefinition<any, any, any, any> | InternalGroup | InternalFetchGateway | InternalAlias;
 /** Controls when output data is displayed. `'all'` displays to both humans and agents. `'agent-only'` suppresses data output in human/TTY mode. */
 export type OutputPolicy = 'agent-only' | 'all';
 /** A standard Fetch API handler. */
@@ -369,11 +373,11 @@ type Usage<args extends z.ZodObject<any> | undefined, options extends z.ZodObjec
 /** @internal Inferred output type of a Zod schema, or `{}` when the schema is not provided. */
 type InferOutput<schema extends z.ZodObject<any> | undefined> = schema extends z.ZodObject<any> ? z.output<schema> : {};
 /** @internal Inferred return type for a command handler. */
-type InferReturn<output extends z.ZodType | undefined> = output extends z.ZodType ? z.output<output> : unknown;
+type InferReturn<output extends z.ZodType | Schema.JsonSchema | undefined> = output extends z.ZodType ? z.output<output> : unknown;
 /** @internal Inferred vars type from a Zod schema, or `{}` when no schema is provided. */
 type InferVars<vars extends z.ZodObject<any> | undefined> = vars extends z.ZodObject<any> ? z.output<vars> : {};
 /** @internal Defines a command's schema, handler, and metadata. */
-type CommandDefinition<args extends z.ZodObject<any> | undefined = undefined, env extends z.ZodObject<any> | undefined = undefined, options extends z.ZodObject<any> | undefined = undefined, output extends z.ZodType | undefined = undefined, vars extends z.ZodObject<any> | undefined = undefined, cliEnv extends z.ZodObject<any> | undefined = undefined> = CommandMeta<options> & {
+type CommandDefinition<args extends z.ZodObject<any> | undefined = undefined, env extends z.ZodObject<any> | undefined = undefined, options extends z.ZodObject<any> | undefined = undefined, output extends z.ZodType | Schema.JsonSchema | undefined = undefined, vars extends z.ZodObject<any> | undefined = undefined, cliEnv extends z.ZodObject<any> | undefined = undefined> = CommandMeta<options> & {
     /** Alternative names for this command (e.g. `['extensions', 'ext']` for an `extension` command). */
     aliases?: string[] | undefined;
     /** Zod schema for positional arguments. */

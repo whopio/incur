@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import * as Schema from './Schema.js';
 /** Information about a single command, passed to `generate()`. */
 export type CommandInfo = {
     /** Command name (subcommand path). Omit for root commands. */
@@ -8,7 +9,7 @@ export type CommandInfo = {
     env?: z.ZodObject<any> | undefined;
     hint?: string | undefined;
     options?: z.ZodObject<any> | undefined;
-    output?: z.ZodType | undefined;
+    output?: z.ZodType | Schema.JsonSchema | undefined;
     examples?: {
         command: string;
         description?: string;

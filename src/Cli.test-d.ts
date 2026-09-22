@@ -511,3 +511,23 @@ test('globalAlias keys are constrained to globals schema keys', () => {
   const badAlias: Partial<Record<keyof z.output<typeof globals>, string>> = { foo: 'f' }
   void badAlias
 })
+
+test('a Zod output types what run returns; a JSON Schema output leaves it open and keeps args typed', () => {
+  const cli = Cli.create('t', { description: 't' })
+  cli.command('zod', {
+    output: z.object({ ok: z.boolean() }),
+    run() {
+      return { ok: true }
+    },
+  })
+  cli.command('json', {
+    args: z.object({ id: z.string() }),
+    output: { type: 'object', properties: { ok: { type: 'boolean' } } } as Record<string, unknown>,
+    run({ args }) {
+      expectTypeOf(args.id).toEqualTypeOf<string>()
+      return { anything: 1 }
+    },
+  })
+  // @ts-expect-error a Zod output rejects a return that does not match it
+  cli.command('wrong', { output: z.object({ ok: z.boolean() }), run: () => ({ ok: 'no' }) })
+})
