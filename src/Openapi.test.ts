@@ -13,7 +13,9 @@ import { app as openapiApp, spec as openapiSpec } from '../test/fixtures/hono-op
 import { spec } from '../test/fixtures/openapi-spec.js'
 import * as Cli from './Cli.js'
 import * as Fetch from './Fetch.js'
+import * as Mcp from './Mcp.js'
 import * as Openapi from './Openapi.js'
+import * as Schema from './Schema.js'
 
 function serve(cli: { serve: Cli.Cli['serve'] }, argv: string[]) {
   let output = ''
@@ -448,6 +450,224 @@ describe('generateCommands', () => {
         "get",
       ]
     `)
+  })
+})
+
+describe('response output', () => {
+  const responseSpec = {
+    openapi: '3.0.0',
+    info: { title: 'Test API', version: '1.0.0' },
+    components: {
+      schemas: {
+        Product: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'The product id' },
+            created_at: { type: 'string', format: 'date-time' },
+            status: { type: 'string', enum: ['active', 'paused'], 'x-kind': 'status' },
+            price: {
+              type: 'object',
+              properties: { amount: { type: 'number' }, currency: { type: 'string' } },
+              required: ['amount', 'currency'],
+            },
+            note: { type: ['string', 'null'] },
+          },
+          required: ['id'],
+        },
+      },
+    },
+    paths: {
+      '/products': {
+        get: {
+          operationId: 'listProducts',
+          summary: 'List products',
+          responses: {
+            '200': {
+              description: 'ok',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      data: { type: 'array', items: { $ref: '#/components/schemas/Product' } },
+                    },
+                    required: ['data'],
+                  },
+                },
+              },
+            },
+          },
+        },
+        post: {
+          operationId: 'createProduct',
+          summary: 'Create a product',
+          requestBody: {
+            content: {
+              'application/json': {
+                schema: { type: 'object', properties: { title: { type: 'string' } } },
+              },
+            },
+          },
+          responses: {
+            '201': {
+              description: 'created',
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/Product' } } },
+            },
+          },
+        },
+      },
+      '/health': {
+        get: {
+          operationId: 'health',
+          summary: 'Health',
+          responses: { '204': { description: 'no body' } },
+        },
+      },
+      '/ping': {
+        get: {
+          operationId: 'ping',
+          summary: 'Ping',
+          responses: {
+            '2XX': {
+              description: 'any success',
+              content: {
+                'application/json': {
+                  schema: { type: 'object', properties: { pong: { type: 'boolean' } } },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/text': {
+        get: {
+          operationId: 'text',
+          summary: 'Text',
+          responses: {
+            '200': {
+              description: 'plain',
+              content: { 'text/plain': { schema: { type: 'string' } } },
+            },
+          },
+        },
+      },
+    },
+  } as const
+
+  const outputOf = async (name: string) => {
+    const commands = await Openapi.generateCommands(responseSpec as any, app.fetch)
+    const cmd = commands.get(name)!
+    if ('_group' in cmd) throw new Error(`expected ${name} command`)
+    return cmd.output
+  }
+
+  test("a 200 JSON response becomes the command output: the spec's own schema, refs resolved, nothing lost", async () => {
+    const output = await outputOf('listProducts')
+    expect(output).toBeDefined()
+    const json = Schema.toJsonSchema(output!) as any
+    const product = json.properties.data.items
+    expect(Object.keys(product.properties)).toEqual(['id', 'created_at', 'status', 'price', 'note'])
+    expect(product.properties.id.description).toBe('The product id')
+    expect(product.properties.created_at).toEqual({ type: 'string', format: 'date-time' })
+    expect(product.properties.status.enum).toEqual(['active', 'paused'])
+    expect(product.properties.status['x-kind']).toBe('status')
+    expect(product.properties.price.required).toEqual(['amount', 'currency'])
+    expect(product.properties.note).toEqual({ type: ['string', 'null'] })
+    expect(product.required).toEqual(['id'])
+  })
+
+  test('201 and 2XX count as success; no body, and non-JSON content, give no output', async () => {
+    expect(await outputOf('createProduct')).toBeDefined()
+    expect(await outputOf('ping')).toBeDefined()
+    expect(await outputOf('health')).toBeUndefined()
+    expect(await outputOf('text')).toBeUndefined()
+  })
+
+  test('a self-referential response schema yields no output instead of an unprintable one', async () => {
+    const recursive = {
+      openapi: '3.0.0',
+      info: { title: 'T', version: '1' },
+      components: {
+        schemas: {
+          Node: {
+            type: 'object',
+            properties: {
+              children: { type: 'array', items: { $ref: '#/components/schemas/Node' } },
+            },
+          },
+        },
+      },
+      paths: {
+        '/tree': {
+          get: {
+            operationId: 'tree',
+            responses: {
+              '200': {
+                description: 'ok',
+                content: { 'application/json': { schema: { $ref: '#/components/schemas/Node' } } },
+              },
+            },
+          },
+        },
+      },
+    }
+    const commands = await Openapi.generateCommands(recursive as any, app.fetch)
+    const cmd = commands.get('tree')!
+    if ('_group' in cmd) throw new Error('expected tree command')
+    expect(cmd.output).toBeUndefined()
+  })
+
+  test('generation does not convert or copy the response: output is the dereferenced schema itself', async () => {
+    const commands = await Openapi.generateCommands(responseSpec as any, app.fetch)
+    const cmd = commands.get('listProducts')!
+    if ('_group' in cmd) throw new Error('expected listProducts command')
+    expect(Schema.isZod(cmd.output!)).toBe(false)
+    expect(Object.getOwnPropertyDescriptor(cmd, 'output')!.get).toBeUndefined()
+  })
+
+  test('--schema prints output beside options, and the MCP tool declares outputSchema', async () => {
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: app.fetch,
+      openapi: responseSpec as any,
+    })
+    let printed = ''
+    await cli.serve(['api', 'listProducts', '--schema', '--format', 'json'], {
+      stdout: (s) => {
+        printed += s
+      },
+      exit: () => {},
+    })
+    const schema = JSON.parse(printed)
+    expect(schema.output.properties.data.items.properties.status.enum).toEqual(['active', 'paused'])
+
+    const commands = await Openapi.generateCommands(responseSpec as any, app.fetch)
+    const tool = Mcp.collectTools(commands, []).find((t) => t.name === 'listProducts')!
+    expect(tool.outputSchema).toBeDefined()
+    expect((tool.outputSchema as any).properties.data.items.properties.id.description).toBe(
+      'The product id',
+    )
+    expect(
+      Mcp.collectTools(commands, []).find((t) => t.name === 'health')!.outputSchema,
+    ).toBeUndefined()
+  })
+
+  test('the output never validates a result: a response outside the schema still returns', async () => {
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch: () => Response.json({ data: [{ id: 1, unexpected: true }], extra: 'x' }),
+      openapi: responseSpec as any,
+    })
+    let printed = ''
+    let code: number | undefined
+    await cli.serve(['api', 'listProducts', '--format', 'json'], {
+      stdout: (s) => {
+        printed += s
+      },
+      exit: (c) => {
+        code = c
+      },
+    })
+    expect(code).toBeUndefined()
+    expect(JSON.parse(printed)).toEqual({ data: [{ id: 1, unexpected: true }], extra: 'x' })
   })
 })
 

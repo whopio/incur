@@ -215,6 +215,8 @@ my-cli api --help                  # shows typed subcommands
 
 Works with any `(Request) => Response` handler — Hono, Elysia, etc. Specs from `@hono/zod-openapi` are supported directly.
 
+Each generated command carries the operation's success response (`200`, `201`, another `2XX`, then `default`; JSON content) as its `output`, kept as the spec's own JSON Schema with `$ref`s resolved. So `my-cli api listUsers --schema` prints `output` beside `options`, the MCP tool declares it as `outputSchema`, and `--llms-full` documents it — the same as a hand-written command with `output`. It describes the result; nothing is validated against it.
+
 ### Serve CLI as Fetch API
 
 Expose your CLI as a standard Fetch API handler with `cli.fetch`. Works with Bun, Cloudflare Workers, Deno, Hono, and anything that accepts `(req: Request) => Response`.

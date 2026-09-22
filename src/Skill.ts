@@ -14,7 +14,7 @@ export type CommandInfo = {
   env?: z.ZodObject<any> | undefined
   hint?: string | undefined
   options?: z.ZodObject<any> | undefined
-  output?: z.ZodType | undefined
+  output?: z.ZodType | Schema.JsonSchema | undefined
   examples?: { command: string; description?: string }[] | undefined
 }
 

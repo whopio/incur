@@ -2943,7 +2943,7 @@ export type CommandsMap = Record<
 
 /** @internal Entry stored in a command map — either a leaf definition, a group, or a fetch gateway. */
 type CommandEntry =
-  | CommandDefinition<any, any, any>
+  | CommandDefinition<any, any, any, any>
   | InternalGroup
   | InternalFetchGateway
   | InternalAlias

@@ -2,6 +2,7 @@ import type { Document } from '@scalar/openapi-types/3.2';
 import { z } from 'zod';
 import * as Cli from './Cli.js';
 import type * as Mcp from './Mcp.js';
+import * as Schema from './Schema.js';
 /** A minimal OpenAPI 3.x spec shape. Accepts both hand-written specs and generated ones (e.g. from `@hono/zod-openapi`). */
 export type OpenAPISpec = {
     components?: {
@@ -62,6 +63,7 @@ type GeneratedCommand = {
         description?: string | undefined;
     } | undefined;
     options?: z.ZodObject<any> | undefined;
+    output?: z.ZodType | Schema.JsonSchema | undefined;
     run: (context: any) => any;
 };
 type GeneratedEntry = GeneratedCommand | GeneratedGroup;

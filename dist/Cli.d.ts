@@ -283,7 +283,7 @@ export type CommandsMap = Record<string, {
     options: Record<string, unknown>;
 }>;
 /** @internal Entry stored in a command map — either a leaf definition, a group, or a fetch gateway. */
-type CommandEntry = CommandDefinition<any, any, any> | InternalGroup | InternalFetchGateway | InternalAlias;
+type CommandEntry = CommandDefinition<any, any, any, any> | InternalGroup | InternalFetchGateway | InternalAlias;
 /** Controls when output data is displayed. `'all'` displays to both humans and agents. `'agent-only'` suppresses data output in human/TTY mode. */
 export type OutputPolicy = 'agent-only' | 'all';
 /** A standard Fetch API handler. */
