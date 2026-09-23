@@ -62,6 +62,48 @@ describe('parse', () => {
     expect(result.options).toEqual({ limit: 10 })
   })
 
+  test('coerces strings to number literals in a union', () => {
+    const result = Parser.parse(['--duration', '15'], {
+      options: z.object({
+        duration: z.union([z.literal(5), z.literal(10), z.literal(15)]).optional(),
+      }),
+    })
+    expect(result.options).toEqual({ duration: 15 })
+  })
+
+  test('coerces a string to a single number literal', () => {
+    const result = Parser.parse(['--version', '2'], {
+      options: z.object({ version: z.literal(2) }),
+    })
+    expect(result.options).toEqual({ version: 2 })
+  })
+
+  test('coerces repeated flags to number literals', () => {
+    const result = Parser.parse(['--size', '5', '--size', '10'], {
+      options: z.object({ size: z.array(z.union([z.literal(5), z.literal(10)])) }),
+    })
+    expect(result.options).toEqual({ size: [5, 10] })
+  })
+
+  test('keeps string literals and mixed unions intact', () => {
+    const strings = Parser.parse(['--level', '5'], {
+      options: z.object({ level: z.union([z.literal('5'), z.literal('10')]) }),
+    })
+    expect(strings.options).toEqual({ level: '5' })
+    const mixed = Parser.parse(['--quality', 'auto'], {
+      options: z.object({ quality: z.union([z.literal('auto'), z.literal(5)]) }),
+    })
+    expect(mixed.options).toEqual({ quality: 'auto' })
+  })
+
+  test('throws ValidationError on a number outside the literal union', () => {
+    expect(() =>
+      Parser.parse(['--duration', '7'], {
+        options: z.object({ duration: z.union([z.literal(5), z.literal(10), z.literal(15)]) }),
+      }),
+    ).toThrow(expect.objectContaining({ name: 'Incur.ValidationError' }))
+  })
+
   test('coerces string to boolean', () => {
     const result = Parser.parse(['--dry', 'true'], {
       options: z.object({ dry: z.boolean() }),
@@ -704,5 +746,14 @@ describe('parseGlobals', () => {
     const schema = z.object({ tag: z.array(z.string()).default([]) })
     const result = Parser.parseGlobals(['--tag=foo', '--tag=bar'], schema)
     expect(result.parsed).toEqual({ tag: ['foo', 'bar'] })
+  })
+})
+
+describe('parseEnv', () => {
+  test('coerces env values to number literals', () => {
+    const env = Parser.parseEnv(z.object({ TIER: z.union([z.literal(1), z.literal(2)]) }), {
+      TIER: '2',
+    })
+    expect(env).toEqual({ TIER: 2 })
   })
 })
