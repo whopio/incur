@@ -52,9 +52,18 @@ export async function sync(
             const meta = parseSkillFrontmatter(content)
             const skillName =
               pattern === '_root' ? (meta.name ?? name) : path.basename(path.dirname(match))
-            const dest = path.join(tmpDir, skillName, 'SKILL.md')
-            await fs.mkdir(path.dirname(dest), { recursive: true })
-            await fs.writeFile(dest, content)
+            const source = path.dirname(path.resolve(cwd, match))
+            const dest = path.join(tmpDir, skillName)
+            await fs.mkdir(dest, { recursive: true })
+            if (pattern === '_root') {
+              await fs.writeFile(path.join(dest, 'SKILL.md'), content)
+              // A root skill may live in a repository; never install that whole tree.
+              for (const dir of ['references', 'scripts', 'assets', 'agents']) {
+                const from = path.join(source, dir)
+                if (fsSync.existsSync(from))
+                  await fs.cp(from, path.join(dest, dir), { recursive: true })
+              }
+            } else await fs.cp(source, dest, { recursive: true })
             // An included skill overrides a generated one with the same
             // frontmatter name. Remove the generated copy — otherwise both
             // land in tmpDir and install order (which differs between node
@@ -67,7 +76,9 @@ export async function sync(
               existing.description = meta.description
               existing.external = true
             } else skills.push({ name: skillName, description: meta.description, external: true })
-          } catch {}
+          } catch (cause) {
+            throw new Error(`Failed to stage included skill ${match}`, { cause })
+          }
         }
       }
     }
@@ -187,7 +198,9 @@ export async function list(
           const meta = parseSkillFrontmatter(content)
           const skillName =
             pattern === '_root' ? (meta.name ?? name) : path.basename(path.dirname(match))
-          if (!skills.some((s) => s.name === skillName)) {
+          const existing = skills.find((s) => s.name === skillName)
+          if (existing) existing.description = meta.description
+          else {
             skills.push({
               name: skillName,
               description: meta.description,

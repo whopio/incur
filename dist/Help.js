@@ -4,7 +4,7 @@ import { arraySchema, describedAs, toKebab } from './internal/helpers.js';
 import { defaultEnvSource } from './Parser.js';
 /** Formats help text for a router CLI or command group. */
 export function formatRoot(name, options = {}) {
-    const { aliases, configFlag, description, globals, version, commands = [], root = false, } = options;
+    const { aliases, configFlag, description, globals, hideSkills = false, version, commands = [], root = false, } = options;
     const lines = [];
     // Header
     const title = version ? `${name}@${version}` : name;
@@ -28,12 +28,12 @@ export function formatRoot(name, options = {}) {
                 lines.push(`  ${cmd.name}`);
         }
     }
-    lines.push(...globalOptionsLines(root, configFlag, globals));
+    lines.push(...globalOptionsLines(root, configFlag, globals, hideSkills));
     return lines.join('\n');
 }
 /** Formats help text for a leaf command. */
 export function formatCommand(name, options = {}) {
-    const { alias, aliases, configFlag, description, globals, version, args, env, envSource, hint, root = false, options: opts, examples, } = options;
+    const { alias, aliases, configFlag, description, globals, hideSkills = false, version, args, env, envSource, hint, root = false, options: opts, examples, } = options;
     const lines = [];
     // Header
     const title = version ? `${name}@${version}` : name;
@@ -134,7 +134,7 @@ export function formatCommand(name, options = {}) {
         }
     }
     if (!options.hideGlobalOptions)
-        lines.push(...globalOptionsLines(root, configFlag, globals));
+        lines.push(...globalOptionsLines(root, configFlag, globals, hideSkills));
     // Environment Variables
     if (env) {
         const entries = envEntries(env);
@@ -157,14 +157,14 @@ export function formatCommand(name, options = {}) {
     }
     return lines.join('\n');
 }
-/** Builds the synopsis string with `<required>` and `[optional]` placeholders. */
+/** Builds the synopsis string with `<required>`, `[optional]`, and `<variadic...>` placeholders. */
 function buildSynopsis(name, args) {
     if (!args)
         return name;
     const parts = [name];
     for (const [key, schema] of Object.entries(args.shape)) {
         const type = resolveTypeName(schema);
-        const label = type.includes('|') ? type : key;
+        const label = (type.includes('|') ? type : key) + (type === 'array' ? '...' : '');
         parts.push(schema._zod.optout === 'optional' ? `[${label}]` : `<${label}>`);
     }
     return parts.join(' ');
@@ -269,10 +269,12 @@ function extractDeprecated(schema) {
     return meta?.deprecated === true ? true : undefined;
 }
 /** Renders the built-in commands and global options block. Root-only items are hidden for subcommands. */
-function globalOptionsLines(root = false, configFlag, globals) {
+function globalOptionsLines(root = false, configFlag, globals, hideSkills = false) {
     const lines = [];
     if (root) {
-        const builtins = builtinCommands.flatMap((b) => {
+        const builtins = builtinCommands
+            .filter((b) => !hideSkills || b.name !== 'skills')
+            .flatMap((b) => {
             if (!b.subcommands)
                 return [{ name: b.name, desc: b.description }];
             if (b.subcommands.length === 1)
@@ -319,6 +321,7 @@ function globalOptionsLines(root = false, configFlag, globals) {
         { flag: '--token-limit <n>', desc: 'Limit output to n tokens' },
         { flag: '--token-offset <n>', desc: 'Skip first n tokens of output' },
         { flag: '--full-output', desc: 'Show full output envelope' },
+        ...(root ? [{ flag: '--update', desc: 'Update to latest version' }] : []),
         ...(root ? [{ flag: '--version', desc: 'Show version' }] : []),
     ].sort((a, b) => a.flag.localeCompare(b.flag));
     const maxLen = Math.max(...flags.map((f) => f.flag.length));

@@ -133,6 +133,33 @@ describe('Mcp', () => {
     expect(res.result.serverInfo).toEqual({ name: 'test-cli', version: '1.0.0', icons })
   })
 
+  test('initialize includes the server title', async () => {
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const chunks: string[] = []
+    output.on('data', (chunk) => chunks.push(chunk.toString()))
+
+    const done = Mcp.serve('test-cli', '1.0.0', createTestCommands(), {
+      input,
+      output,
+      title: 'Test MCP',
+    })
+
+    input.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: initParams })}\n`,
+    )
+    await new Promise((r) => setTimeout(r, 20))
+    input.end()
+    await done
+
+    const [res] = chunks.map((chunk) => JSON.parse(chunk.trim()))
+    expect(res.result.serverInfo).toEqual({
+      name: 'test-cli',
+      title: 'Test MCP',
+      version: '1.0.0',
+    })
+  })
+
   test('initialize with 2025-03-26 protocol version', async () => {
     const [res] = await mcpSession(createTestCommands(), [
       {
@@ -317,6 +344,24 @@ describe('Mcp', () => {
     `)
   })
 
+  test('collectTools includes callable groups and their child commands', () => {
+    const commands = new Map<string, any>([
+      [
+        'project',
+        {
+          _group: true,
+          root: { description: 'Show project', run: () => null },
+          commands: new Map([['list', { description: 'List projects', run: () => null }]]),
+        },
+      ],
+    ])
+
+    expect(Mcp.collectTools(commands, []).map((tool) => tool.name)).toEqual([
+      'project',
+      'project_list',
+    ])
+  })
+
   test('collectTools filters tools by include and exclude patterns', () => {
     const commands = new Map<string, any>([
       ['docs_list', { run: () => null }],
@@ -435,6 +480,28 @@ describe('Mcp', () => {
     expect(res.result.content).toEqual([{ type: 'text', text: '{"result":"HELLO"}' }])
   })
 
+  test('tools/list and tools/call handle variadic array args', async () => {
+    const commands = new Map<string, any>()
+    commands.set('lint', {
+      description: 'Lint files',
+      args: z.object({ paths: z.array(z.string()).describe('Files to lint') }),
+      run: (c: any) => ({ count: c.args.paths.length }),
+    })
+
+    const [, listRes, callRes] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/list', params: {} },
+      {
+        id: 3,
+        method: 'tools/call',
+        params: { name: 'lint', arguments: { paths: ['a.ts', 'b.ts'] } },
+      },
+    ])
+
+    expect(listRes.result.tools[0].inputSchema.properties.paths).toMatchObject({ type: 'array' })
+    expect(callRes.result.content).toEqual([{ type: 'text', text: '{"count":2}' }])
+  })
+
   test('tools/call validation error includes fieldErrors', async () => {
     const tool = Mcp.collectTools(createTestCommands(), []).find((tool) => tool.name === 'echo')!
     const result = await Mcp.callTool(tool, { message: 123 })
@@ -526,7 +593,7 @@ describe('Mcp', () => {
     expect(callRes.result.structuredContent).toBeUndefined()
   })
 
-  test('tools/call surfaces cta metadata without changing structured content', async () => {
+  test('tools/call appends cta suggestions to result text', async () => {
     const commands = new Map<string, any>()
     commands.set('show', {
       description: 'Show a record',
@@ -549,11 +616,50 @@ describe('Mcp', () => {
       { id: 2, method: 'tools/call', params: { name: 'show', arguments: {} } },
     ])
 
-    expect(res.result.content).toEqual([{ type: 'text', text: '{"id":"foo"}' }])
+    expect(res.result.content[0].text).toMatchInlineSnapshot(`
+      "{"id":"foo"}
+
+      Next:
+        test-cli list - List all"
+    `)
     expect(res.result.structuredContent).toEqual({ id: 'foo' })
     expect(res.result._meta?.cta).toEqual({
       description: 'Next:',
       commands: [{ command: 'test-cli list', description: 'List all' }],
+    })
+  })
+
+  test('tools/call appends cta suggestions to error text', async () => {
+    const commands = new Map<string, any>()
+    commands.set('deploy', {
+      description: 'Deploy a thing',
+      run(c: any) {
+        return c.error({
+          code: 'NOT_AUTHENTICATED',
+          message: 'not signed in',
+          cta: {
+            description: 'Next:',
+            commands: [{ command: 'login', description: 'Sign in' }],
+          },
+        })
+      },
+    })
+
+    const [, res] = await mcpSession(commands, [
+      { id: 1, method: 'initialize', params: initParams },
+      { id: 2, method: 'tools/call', params: { name: 'deploy', arguments: {} } },
+    ])
+
+    expect(res.result.isError).toBe(true)
+    expect(res.result.content[0].text).toMatchInlineSnapshot(`
+      "not signed in
+
+      Next:
+        test-cli login - Sign in"
+    `)
+    expect(res.result._meta?.cta).toEqual({
+      description: 'Next:',
+      commands: [{ command: 'test-cli login', description: 'Sign in' }],
     })
   })
 

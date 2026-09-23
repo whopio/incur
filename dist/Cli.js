@@ -2,7 +2,10 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { PassThrough } from 'node:stream';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { estimateTokenCount, sliceByTokens } from 'tokenx';
+import { z } from 'zod';
+import * as Binary from './Binary.js';
 import * as Completions from './Completions.js';
 import { IncurError, ParseError, ValidationError } from './Errors.js';
 import * as Fetch from './Fetch.js';
@@ -12,9 +15,11 @@ import * as Help from './Help.js';
 import { builtinCommands, findBuiltin, findBuiltinSubcommand, shells, } from './internal/command.js';
 import * as Command from './internal/command.js';
 import { formatCtaBlock } from './internal/cta.js';
+import * as FsCommands from './internal/fsCommands.js';
 import { isRecord, suggest, toKebab } from './internal/helpers.js';
 import * as Json from './internal/json.js';
 import { detectRunner } from './internal/pm.js';
+import * as Update from './internal/update.js';
 import * as Yaml from './internal/yaml.js';
 import * as Mcp from './Mcp.js';
 import * as McpSource from './McpSource.js';
@@ -25,9 +30,17 @@ import * as Skill from './Skill.js';
 import * as SyncMcp from './SyncMcp.js';
 import * as SyncSkills from './SyncSkills.js';
 const destructiveCommandHint = 'Confirm with the user before executing this destructive command.';
+const fileCommandSymbol = Symbol.for('incur.fileCommand');
+/** Defines a command whose route is inferred from its module path by `fs()`. */
+export function command(definition) {
+    const result = { ...definition };
+    Object.defineProperty(result, fileCommandSymbol, { value: true });
+    return result;
+}
 export function create(nameOrDefinition, definition) {
     const name = typeof nameOrDefinition === 'string' ? nameOrDefinition : nameOrDefinition.name;
     const def = typeof nameOrDefinition === 'string' ? (definition ?? {}) : nameOrDefinition;
+    const version = def.version ?? Binary.version;
     const rootDef = 'run' in def ? def : undefined;
     const rootFetchSource = 'fetch' in def && def.fetch !== undefined ? def.fetch : undefined;
     const rootFetch = rootFetchSource === undefined ? undefined : resolveFetch(rootFetchSource);
@@ -35,9 +48,11 @@ export function create(nameOrDefinition, definition) {
     const commands = new Map();
     const middlewares = [];
     const pending = [];
-    const mcpHandler = createMcpHttpHandler(name, def.version ?? '0.0.0', {
+    const mcpHandler = createMcpHttpHandler(def.mcp?.name ?? name, version ?? '0.0.0', {
+        instructions: def.mcp?.instructions,
         icons: def.mcp?.icons,
         stateless: def.mcp?.stateless,
+        title: def.mcp?.title,
         tools: def.mcp?.tools,
     });
     if (def.openapi && rootFetch) {
@@ -113,28 +128,34 @@ export function create(nameOrDefinition, definition) {
                 return cli;
             }
             const mountedRootDef = toRootDefinition.get(nameOrCli);
-            if (mountedRootDef) {
-                assertNoGlobalOptionConflicts(nameOrCli.name, mountedRootDef, toGlobals.get(cli));
-                commands.set(nameOrCli.name, mountedRootDef);
-                const rootAliases = toRootAliases.get(nameOrCli);
-                if (rootAliases)
-                    for (const a of rootAliases)
-                        commands.set(a, { _alias: true, target: nameOrCli.name });
-                return cli;
-            }
             const sub = nameOrCli;
             const subCommands = toCommands.get(sub);
             const subOutputPolicy = toOutputPolicy.get(sub);
             const subMiddlewares = toMiddlewares.get(sub);
-            const entry = {
-                _group: true,
-                description: sub.description,
-                commands: subCommands,
-                ...(subOutputPolicy ? { outputPolicy: subOutputPolicy } : undefined),
-                ...(subMiddlewares?.length ? { middlewares: subMiddlewares } : undefined),
-            };
-            assertNoGlobalOptionConflicts(sub.name, entry, toGlobals.get(cli));
+            const subPending = toPending.get(sub);
+            const entry = mountedRootDef && subCommands.size === 0
+                ? mountedRootDef
+                : {
+                    _group: true,
+                    description: sub.description,
+                    commands: subCommands,
+                    ...(mountedRootDef ? { root: mountedRootDef } : undefined),
+                    ...(subOutputPolicy ? { outputPolicy: subOutputPolicy } : undefined),
+                    ...(subMiddlewares?.length ? { middlewares: subMiddlewares } : undefined),
+                };
+            if (subPending?.length)
+                pending.push(Promise.all(subPending).then(() => {
+                    assertNoGlobalOptionConflicts(sub.name, entry, toGlobals.get(cli));
+                }));
+            else
+                assertNoGlobalOptionConflicts(sub.name, entry, toGlobals.get(cli));
             commands.set(sub.name, entry);
+            if (mountedRootDef) {
+                const rootAliases = toRootAliases.get(nameOrCli);
+                if (rootAliases)
+                    for (const alias of rootAliases)
+                        commands.set(alias, { _alias: true, target: nameOrCli.name });
+            }
             return cli;
         },
         async fetch(req) {
@@ -150,10 +171,26 @@ export function create(nameOrDefinition, definition) {
                 name,
                 rootCommand: rootDef,
                 vars: def.vars,
-                version: def.version,
+                version,
             });
         },
+        fs(directory) {
+            const manifest = FsCommands.consumeManifest();
+            pending.push((async () => {
+                const routes = manifest
+                    ? await FsCommands.loadManifest(manifest)
+                    : await loadFsCommandRoutes(await resolveFsCommandsRoot(directory));
+                for (const route of routes) {
+                    if (!isFileCommand(route.command))
+                        throw new Error(`Expected the default export from '${route.file}' to be created with \`Cli.command()\`.`);
+                    mountFsCommand(commands, route.segments, route.command, route.file, toGlobals.get(cli));
+                }
+            })());
+            return cli;
+        },
         async serve(argv = process.argv.slice(2), serveOptions = {}) {
+            if (await Binary.handleArgv(argv))
+                return;
             if (pending.length > 0)
                 await Promise.all(pending);
             const globalsDesc = toGlobals.get(cli);
@@ -170,11 +207,13 @@ export function create(nameOrDefinition, definition) {
                 middlewares,
                 outputPolicy: def.outputPolicy,
                 renderer: def.renderer,
+                package: def.package,
                 rootCommand: rootDef,
                 rootFetch,
                 sync: def.sync,
+                update: def.update,
                 vars: def.vars,
-                version: def.version,
+                version,
             });
         },
         use(handler) {
@@ -202,6 +241,9 @@ export function create(nameOrDefinition, definition) {
             'llmsFull',
             'mcp',
             'help',
+            'incurBinaryApply',
+            'incurUpdateCheck',
+            'update',
             'version',
             'schema',
             'filterOutput',
@@ -228,6 +270,7 @@ export function create(nameOrDefinition, definition) {
     }
     toMiddlewares.set(cli, middlewares);
     toCommands.set(cli, commands);
+    toPending.set(cli, pending);
     return cli;
 }
 /** @internal Shared serve implementation for both router and leaf CLIs. */
@@ -240,6 +283,11 @@ async function serveImpl(name, commands, argv, options = {}) {
     const configEnabled = options.config !== undefined;
     const configFlag = options.config?.flag;
     const displayName = resolveDisplayName(name, options.aliases);
+    const skillsEnabled = options.sync !== false;
+    const sync = options.sync === false ? undefined : options.sync;
+    const builtins = skillsEnabled
+        ? builtinCommands
+        : builtinCommands.filter((command) => command.name !== 'skills');
     function writeln(s) {
         stdout(s.endsWith('\n') ? s : `${s}\n`);
     }
@@ -272,8 +320,13 @@ async function serveImpl(name, commands, argv, options = {}) {
         exit(1);
         return;
     }
-    const { fullOutput, format: formatFlag, formatExplicit, filterOutput, tokenLimit, tokenOffset, tokenCount, llms, llmsFull, mcp: mcpFlag, help, version, schema, configPath, configDisabled, rest, } = builtinFlags;
+    const { fullOutput, format: formatFlag, formatExplicit, filterOutput, tokenLimit, tokenOffset, tokenCount, llms, llmsFull, mcp: mcpFlag, help, update, updateCheck, version, schema, configPath, configDisabled, rest, } = builtinFlags;
     human = tty && !formatExplicit;
+    const updateOptions = {
+        ...(typeof options.update === 'object' ? options.update : undefined),
+        binary: Binary.target !== undefined,
+        version: options.version,
+    };
     let globals = {};
     let filtered = rest;
     function parseGlobalOptions(validate) {
@@ -303,15 +356,54 @@ async function serveImpl(name, commands, argv, options = {}) {
     // Pre-load yaml for the sync formatting paths below (yaml is loaded lazily -- see internal/yaml.ts).
     if (formatFlag === 'yaml')
         await Yaml.load();
+    if (updateCheck) {
+        if (options.update !== false)
+            try {
+                await Update.refresh(name, updateOptions);
+            }
+            catch { }
+        return;
+    }
+    // --help takes precedence over --update.
+    if (update && !help) {
+        try {
+            const result = await Update.install(name, updateOptions);
+            if (human) {
+                const lines = [
+                    result.deferred ? `✓ Update staged for ${result.name}` : `✓ Updated ${result.name}`,
+                ];
+                if (result.command)
+                    lines.push(`  ${result.command}`);
+                if (result.deferred)
+                    lines.push('  Installation will finish after this process exits.');
+                writeln(lines.join('\n'));
+            }
+            else
+                writeln(Formatter.format(result, formatFlag));
+        }
+        catch (error) {
+            const output = {
+                code: 'UPDATE_FAILED',
+                message: error instanceof Error ? error.message : String(error),
+            };
+            if (human)
+                writeln(formatHumanError(output));
+            else
+                writeln(Formatter.format(output, formatFlag));
+            exit(1);
+        }
+        return;
+    }
     // --mcp: start as MCP stdio server
     if (mcpFlag) {
-        await Mcp.serve(name, options.version ?? '0.0.0', commands, {
+        await Mcp.serve(options.mcp?.name ?? name, options.version ?? '0.0.0', commands, {
             middlewares: options.middlewares,
             env: options.envSchema,
             vars: options.vars,
             version: options.version,
             ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
             ...(options.mcp?.icons ? { icons: options.mcp.icons } : undefined),
+            ...(options.mcp?.title ? { title: options.mcp.title } : undefined),
             ...(options.mcp?.tools ? { tools: options.mcp.tools } : undefined),
         });
         return;
@@ -336,7 +428,7 @@ async function serveImpl(name, commands, argv, options = {}) {
             const current = words[index] ?? '';
             const nonFlags = words.slice(0, index).filter((w) => !w.startsWith('-'));
             if (nonFlags.length <= 1) {
-                for (const b of builtinCommands) {
+                for (const b of builtins) {
                     if (b.name.startsWith(current) && !candidates.some((c) => c.value === b.name))
                         candidates.push({
                             value: b.name,
@@ -348,7 +440,7 @@ async function serveImpl(name, commands, argv, options = {}) {
             else if (nonFlags.length === 2) {
                 const parent = nonFlags[nonFlags.length - 1];
                 const builtin = findBuiltin(parent);
-                if (builtin?.subcommands)
+                if (builtin?.subcommands && builtins.includes(builtin))
                     for (const sub of builtin.subcommands)
                         for (const value of [sub.name, ...(sub.aliases ?? [])])
                             if (value.startsWith(current) && !candidates.some((c) => c.value === value))
@@ -362,17 +454,24 @@ async function serveImpl(name, commands, argv, options = {}) {
     }
     // Skills staleness check (skip for built-in commands)
     let skillsCta;
-    if (!llms && !llmsFull && !schema && !help && !version) {
+    if (skillsEnabled &&
+        !llms &&
+        !llmsFull &&
+        !schema &&
+        !help &&
+        !update &&
+        !updateCheck &&
+        !version) {
         const isSkillsAdd = builtinIdx(filtered, name, 'skills') !== -1;
         const isMcpAdd = builtinIdx(filtered, name, 'mcp') !== -1;
         if (!isSkillsAdd && !isMcpAdd) {
             const stored = SyncSkills.readHash(name);
-            if (stored && SyncSkills.hasInstalledSkills(name, { cwd: options.sync?.cwd })) {
+            if (stored && SyncSkills.hasInstalledSkills(name, { cwd: sync?.cwd })) {
                 const groups = new Map();
                 const entries = collectSkillCommands(commands, [], groups, options.rootCommand);
                 if (Skill.hash(entries) !== stored) {
                     const command = process.env.npm_config_user_agent || process.env.npm_execpath
-                        ? `${detectRunner()} ${SyncMcp.detectPackageSpecifier(name)} skills add`
+                        ? `${detectRunner()} ${SyncMcp.detectPackageSpecifier(name, options.package, options.version)} skills add`
                         : `${displayName} skills add`;
                     skillsCta = {
                         description: 'Skills are out of date:',
@@ -387,6 +486,7 @@ async function serveImpl(name, commands, argv, options = {}) {
         let scopedCommands = commands;
         const prefix = [];
         let scopedDescription = options.description;
+        let scopedRoot = options.rootCommand;
         for (const token of filtered) {
             const rawEntry = scopedCommands.get(token);
             if (!rawEntry)
@@ -395,15 +495,18 @@ async function serveImpl(name, commands, argv, options = {}) {
             if (isGroup(entry)) {
                 scopedCommands = entry.commands;
                 scopedDescription = entry.description;
+                scopedRoot = entry.root;
                 prefix.push(token);
             }
             else {
                 // Leaf command — scope to just this command
                 scopedCommands = new Map([[token, entry]]);
+                scopedRoot = undefined;
                 break;
             }
         }
-        const scopedRoot = prefix.length === 0 ? options.rootCommand : undefined;
+        if (prefix.length === 0)
+            scopedRoot = options.rootCommand;
         // Markdown skill output renders scopedName separately. Passing prefix again
         // to those collect helpers would double the group segment in command names
         // (e.g. "cli auth auth login" instead of "cli auth login").
@@ -416,7 +519,7 @@ async function serveImpl(name, commands, argv, options = {}) {
                 writeln(Skill.generate(scopedName, cmds, groups));
                 return;
             }
-            writeln(Formatter.format(buildManifest(scopedCommands, prefix, options.globals?.schema), formatFlag));
+            writeln(Formatter.format(buildManifest(scopedCommands, prefix, options.globals?.schema, scopedRoot), formatFlag));
             return;
         }
         if (!formatExplicit || formatFlag === 'md') {
@@ -426,7 +529,7 @@ async function serveImpl(name, commands, argv, options = {}) {
             writeln(Skill.index(scopedName, cmds, scopedDescription));
             return;
         }
-        writeln(Formatter.format(buildIndexManifest(scopedCommands, prefix, options.globals?.schema), formatFlag));
+        writeln(Formatter.format(buildIndexManifest(scopedCommands, prefix, options.globals?.schema, scopedRoot), formatFlag));
         return;
     }
     // completions <shell>: print shell hook script to stdout
@@ -456,7 +559,7 @@ async function serveImpl(name, commands, argv, options = {}) {
         return;
     }
     // skills add: generate skill files and install via `<pm>x skills add` (only when sync is configured)
-    const skillsIdx = builtinIdx(filtered, name, 'skills');
+    const skillsIdx = skillsEnabled ? builtinIdx(filtered, name, 'skills') : -1;
     if (skillsIdx !== -1) {
         const builtin = findBuiltin('skills');
         const skillsSub = filtered[skillsIdx + 1];
@@ -499,10 +602,10 @@ async function serveImpl(name, commands, argv, options = {}) {
             }
             try {
                 const result = await SyncSkills.list(name, commands, {
-                    cwd: options.sync?.cwd,
-                    depth: options.sync?.depth ?? 1,
+                    cwd: sync?.cwd,
+                    depth: sync?.depth ?? 1,
                     description: options.description,
-                    include: options.sync?.include,
+                    include: sync?.include,
                     rootCommand: options.rootCommand,
                 });
                 if (result.length === 0) {
@@ -543,16 +646,16 @@ async function serveImpl(name, commands, argv, options = {}) {
             ? Number(rest[depthArg + 1])
             : depthEq
                 ? Number(depthEq.split('=')[1])
-                : (options.sync?.depth ?? 1);
+                : (sync?.depth ?? 1);
         const global = rest.includes('--no-global') ? false : undefined;
         try {
             stdout('Syncing...');
             const result = await SyncSkills.sync(name, commands, {
-                cwd: options.sync?.cwd,
+                cwd: sync?.cwd,
                 depth,
                 description: options.description,
                 global,
-                include: options.sync?.include,
+                include: sync?.include,
                 rootCommand: options.rootCommand,
             });
             stdout('\r\x1b[K');
@@ -568,7 +671,13 @@ async function serveImpl(name, commands, argv, options = {}) {
             }
             lines.push('');
             lines.push(`${result.skills.length} skill${result.skills.length === 1 ? '' : 's'} synced`);
-            const suggestions = options.sync?.suggestions;
+            // Before the suggestions: whatever is left to do is what makes the suggestions work.
+            const body = sync?.body;
+            if (body) {
+                lines.push('');
+                lines.push(body);
+            }
+            const suggestions = sync?.suggestions;
             if (suggestions && suggestions.length > 0) {
                 lines.push('');
                 lines.push(`Your agent can now use ${name}. Try asking:`);
@@ -580,6 +689,8 @@ async function serveImpl(name, commands, argv, options = {}) {
             writeln(lines.join('\n'));
             if (fullOutput || formatExplicit) {
                 const output = { skills: result.paths };
+                if (body)
+                    output.body = body;
                 if (fullOutput && result.agents.length > 0)
                     output.agents = result.agents;
                 writeln(Formatter.format(output, formatExplicit ? formatFlag : 'toon'));
@@ -648,20 +759,25 @@ async function serveImpl(name, commands, argv, options = {}) {
                 agents.push(rest[++i]);
         }
         try {
+            const mcpName = options.mcp?.name ?? name;
             stdout('Registering MCP server...');
-            const result = await SyncMcp.register(name, {
+            const result = await SyncMcp.register(mcpName, {
+                ...(mcpName === name ? undefined : { cli: name }),
                 command,
                 global,
                 agents,
+                ...(options.package !== undefined
+                    ? { package: options.package, version: options.version }
+                    : undefined),
             });
             stdout('\r\x1b[K');
             const lines = [];
-            lines.push(`✓ Registered ${name} as MCP server`);
+            lines.push(`✓ Registered ${mcpName} as MCP server`);
             if (result.agents.length > 0)
                 lines.push(`  Agents: ${result.agents.join(', ')}`);
             lines.push('');
-            lines.push(`Agents can now use ${name} tools.`);
-            const suggestions = options.sync?.suggestions;
+            lines.push(`Agents can now use ${mcpName} tools.`);
+            const suggestions = sync?.suggestions;
             if (suggestions && suggestions.length > 0) {
                 lines.push('');
                 lines.push('Try asking:');
@@ -670,7 +786,7 @@ async function serveImpl(name, commands, argv, options = {}) {
             }
             writeln(lines.join('\n'));
             if (fullOutput || formatExplicit)
-                writeln(Formatter.format({ name, command: result.command, agents: result.agents }, formatExplicit ? formatFlag : 'toon'));
+                writeln(Formatter.format({ name: mcpName, command: result.command, agents: result.agents }, formatExplicit ? formatFlag : 'toon'));
         }
         catch (err) {
             writeln(Formatter.format({ code: 'MCP_ADD_FAILED', message: err instanceof Error ? err.message : String(err) }, formatExplicit ? formatFlag : 'toon'));
@@ -678,7 +794,7 @@ async function serveImpl(name, commands, argv, options = {}) {
         }
         return;
     }
-    // --help takes precedence over --version
+    // --help takes precedence over --version.
     if (version && !help && options.version) {
         writeln(options.version);
         return;
@@ -706,6 +822,7 @@ async function serveImpl(name, commands, argv, options = {}) {
                 examples: formatExamples(cmd.examples),
                 usage: cmd.usage,
                 commands: commands.size > 0 ? collectHelpCommands(commands) : undefined,
+                hideSkills: !skillsEnabled,
                 root: true,
             }));
             return;
@@ -722,6 +839,7 @@ async function serveImpl(name, commands, argv, options = {}) {
                 globals: options.globals,
                 version: options.version,
                 commands: collectHelpCommands(commands),
+                hideSkills: !skillsEnabled,
                 root: true,
             }));
             return;
@@ -751,6 +869,7 @@ async function serveImpl(name, commands, argv, options = {}) {
                 description: options.description,
                 version: options.version,
                 commands: collectHelpCommands(commands),
+                hideSkills: !skillsEnabled,
                 root: true,
             }));
         else
@@ -783,6 +902,7 @@ async function serveImpl(name, commands, argv, options = {}) {
                     examples: formatExamples(cmd.examples),
                     usage: cmd.usage,
                     commands: collectHelpCommands(helpCmds),
+                    hideSkills: !skillsEnabled,
                     root: true,
                 }));
             }
@@ -794,6 +914,7 @@ async function serveImpl(name, commands, argv, options = {}) {
                     globals: options.globals,
                     version: isRoot ? options.version : undefined,
                     commands: collectHelpCommands(helpCmds),
+                    hideSkills: !skillsEnabled,
                     root: isRoot,
                 }));
             }
@@ -802,9 +923,11 @@ async function serveImpl(name, commands, argv, options = {}) {
             const cmd = resolved.command;
             const isRootCmd = resolved.path === name;
             const commandName = isRootCmd ? name : `${name} ${resolved.path}`;
-            const helpSubcommands = isRootCmd && options.rootCommand && commands.size > 0
-                ? collectHelpCommands(commands)
-                : undefined;
+            const helpSubcommands = 'commands' in resolved && resolved.commands && resolved.commands.size > 0
+                ? collectHelpCommands(resolved.commands)
+                : isRootCmd && options.rootCommand && commands.size > 0
+                    ? collectHelpCommands(commands)
+                    : undefined;
             writeln(Help.formatCommand(commandName, {
                 alias: cmd.alias,
                 aliases: isRootCmd ? options.aliases : cmd.aliases,
@@ -820,6 +943,7 @@ async function serveImpl(name, commands, argv, options = {}) {
                 examples: formatExamples(cmd.examples),
                 usage: cmd.usage,
                 commands: helpSubcommands,
+                hideSkills: !skillsEnabled,
                 root: isRootCmd,
             }));
         }
@@ -874,6 +998,21 @@ async function serveImpl(name, commands, argv, options = {}) {
         }));
         return;
     }
+    let updateCta;
+    if (human && options.update !== false) {
+        const update = Update.check(name, updateOptions);
+        if (update)
+            updateCta = {
+                description: `Update available for ${update.name}:`,
+                commands: [
+                    {
+                        command: `${displayName} --update`,
+                        description: `upgrade from ${update.current} to ${update.latest}`,
+                    },
+                ],
+            };
+    }
+    const noticeCta = mergeFormattedCtas(skillsCta, updateCta);
     const start = performance.now();
     // Resolve effective format: explicit --format/--json → command default → CLI default → toon
     const resolvedFormat = 'command' in resolved && resolved.command.format;
@@ -886,7 +1025,7 @@ async function serveImpl(name, commands, argv, options = {}) {
         !resolved.path &&
         (() => {
             const candidates = [...resolved.commands.keys()];
-            for (const b of builtinCommands)
+            for (const b of builtins)
                 candidates.push(b.name);
             return suggest(resolved.error, candidates) !== undefined;
         })();
@@ -928,7 +1067,7 @@ async function serveImpl(name, commands, argv, options = {}) {
     function write(output) {
         if (filterPaths && output.ok && output.data != null)
             output = { ...output, data: Filter.apply(output.data, filterPaths) };
-        if (skillsCta) {
+        if (noticeCta) {
             const existing = output.meta.cta;
             output = {
                 ...output,
@@ -937,9 +1076,9 @@ async function serveImpl(name, commands, argv, options = {}) {
                     cta: existing
                         ? {
                             description: existing.description,
-                            commands: [...existing.commands, ...skillsCta.commands],
+                            commands: [...existing.commands, ...noticeCta.commands],
                         }
-                        : skillsCta,
+                        : noticeCta,
                 },
             };
         }
@@ -1003,7 +1142,7 @@ async function serveImpl(name, commands, argv, options = {}) {
         const parent = effective.path ? `${name} ${effective.path}` : name;
         const candidates = 'commands' in effective ? [...effective.commands.keys()] : [];
         if (!effective.path)
-            for (const b of builtinCommands)
+            for (const b of builtins)
                 candidates.push(b.name);
         const suggestion = suggest(effective.error, candidates);
         const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : '';
@@ -1020,8 +1159,8 @@ async function serveImpl(name, commands, argv, options = {}) {
         };
         if (human && !fullOutput) {
             writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }));
-            const mergedCta = skillsCta
-                ? { ...cta, commands: [...cta.commands, ...skillsCta.commands] }
+            const mergedCta = noticeCta
+                ? { ...cta, commands: [...cta.commands, ...noticeCta.commands] }
                 : cta;
             writeln(formatHumanCta(mergedCta));
             exit(1);
@@ -1283,39 +1422,78 @@ async function serveImpl(name, commands, argv, options = {}) {
 }
 /** @internal Creates a lazy MCP HTTP handler scoped to a CLI instance. */
 function createMcpHttpHandler(name, version, options = {}) {
-    let transport;
+    let session;
+    async function createServer(commands, mcpOptions, stateless) {
+        const { fromJsonSchema, McpServer, WebStandardStreamableHTTPServerTransport } = await import('@modelcontextprotocol/server');
+        const server = new McpServer({
+            name,
+            ...(options.title ? { title: options.title } : undefined),
+            ...(options.icons ? { icons: options.icons } : undefined),
+            version,
+        }, options.instructions ? { instructions: options.instructions } : undefined);
+        Mcp.registerTools(server, commands, {
+            env: mcpOptions?.env,
+            fromJsonSchema,
+            middlewares: mcpOptions?.middlewares,
+            name,
+            request: (extra) => extra?.http?.req,
+            sendNotification: (notification) => server.server.notification(notification),
+            tools: options.tools,
+            vars: mcpOptions?.vars,
+            version,
+        });
+        const transport = new WebStandardStreamableHTTPServerTransport(stateless
+            ? { enableJsonResponse: true }
+            : {
+                sessionIdGenerator: () => crypto.randomUUID(),
+                enableJsonResponse: true,
+            });
+        await server.connect(transport);
+        return { server, transport };
+    }
     return async (req, commands, mcpOptions) => {
         const stateless = options.stateless ?? true;
         if (stateless && req.method !== 'POST')
             return new Response(null, { status: 405, headers: { Allow: 'POST' } });
-        if (!transport) {
-            const { fromJsonSchema, McpServer, WebStandardStreamableHTTPServerTransport } = await import('@modelcontextprotocol/server');
-            const server = new McpServer({
-                name,
-                version,
-                ...(options.icons ? { icons: options.icons } : undefined),
+        if (!stateless) {
+            session ??= createServer(commands, mcpOptions, false).catch((error) => {
+                session = undefined;
+                throw error;
             });
-            Mcp.registerTools(server, commands, {
-                env: mcpOptions?.env,
-                fromJsonSchema,
-                middlewares: mcpOptions?.middlewares,
-                name,
-                request: (extra) => extra?.http?.req,
-                sendNotification: (notification) => server.server.notification(notification),
-                tools: options.tools,
-                vars: mcpOptions?.vars,
-                version,
-            });
-            const transportOptions = stateless
-                ? { enableJsonResponse: true }
-                : {
-                    sessionIdGenerator: () => crypto.randomUUID(),
-                    enableJsonResponse: true,
-                };
-            transport = new WebStandardStreamableHTTPServerTransport(transportOptions);
-            await server.connect(transport);
+            return (await session).transport.handleRequest(req);
         }
-        return transport.handleRequest(req);
+        const abortReason = () => req.signal.reason ?? new DOMException('This operation was aborted', 'AbortError');
+        if (req.signal.aborted)
+            throw abortReason();
+        const { server, transport } = await createServer(commands, mcpOptions, true);
+        let closing;
+        const close = () => (closing ??= server.close());
+        // Transport closure does not settle `handleRequest`; reject the public fetch separately.
+        let rejectAbort;
+        const aborted = new Promise((_resolve, reject) => {
+            rejectAbort = reject;
+        });
+        let didAbort = false;
+        const abort = () => {
+            if (didAbort)
+                return;
+            didAbort = true;
+            rejectAbort(abortReason());
+            void close();
+        };
+        req.signal.addEventListener('abort', abort, { once: true });
+        // Catch aborts that happened during asynchronous server creation.
+        if (req.signal.aborted)
+            abort();
+        try {
+            if (req.signal.aborted)
+                return await aborted;
+            return await Promise.race([transport.handleRequest(req), aborted]);
+        }
+        finally {
+            req.signal.removeEventListener('abort', abort);
+            await close();
+        }
     };
 }
 function isOpenapiRoute(segments) {
@@ -1690,6 +1868,17 @@ function resolveCommand(commands, tokens) {
         if (entry.middlewares)
             collectedMiddlewares.push(...entry.middlewares);
         const next = remaining[0];
+        if (!next && entry.root) {
+            const outputPolicy = entry.root.outputPolicy ?? inheritedOutputPolicy;
+            return {
+                command: entry.root,
+                commands: entry.commands,
+                middlewares: collectedMiddlewares,
+                path: path.join(' '),
+                rest: remaining,
+                ...(outputPolicy ? { outputPolicy } : undefined),
+            };
+        }
         if (!next)
             return {
                 help: true,
@@ -1699,6 +1888,17 @@ function resolveCommand(commands, tokens) {
             };
         const rawChild = entry.commands.get(next);
         if (!rawChild) {
+            if (entry.root && !suggest(next, entry.commands.keys())) {
+                const outputPolicy = entry.root.outputPolicy ?? inheritedOutputPolicy;
+                return {
+                    command: entry.root,
+                    commands: entry.commands,
+                    middlewares: collectedMiddlewares,
+                    path: path.join(' '),
+                    rest: remaining,
+                    ...(outputPolicy ? { outputPolicy } : undefined),
+                };
+            }
             return {
                 error: next,
                 path: path.join(' '),
@@ -1730,7 +1930,7 @@ function resolveCommand(commands, tokens) {
         ...(outputPolicy ? { outputPolicy } : undefined),
     };
 }
-/** @internal Extracts built-in flags (--full-output, --format, --json, --llms, --help, --version) from argv. */
+/** @internal Extracts built-in flags from argv. */
 const validFormats = new Set(['toon', 'json', 'yaml', 'md', 'jsonl']);
 function extractBuiltinFlags(argv, options = {}) {
     let fullOutput = false;
@@ -1738,6 +1938,8 @@ function extractBuiltinFlags(argv, options = {}) {
     let llmsFull = false;
     let mcp = false;
     let help = false;
+    let update = false;
+    let updateCheck = false;
     let version = false;
     let schema = false;
     let format = 'toon';
@@ -1764,7 +1966,12 @@ function extractBuiltinFlags(argv, options = {}) {
             mcp = true;
         else if (token === '--help' || token === '-h')
             help = true;
-        else if (token === '--version')
+        else if (token === '--update')
+            update = true;
+        else if (token === Update.checkFlag)
+            updateCheck = true;
+        // A following value belongs to a command-local `--version` option.
+        else if (token === '--version' && (argv[i + 1] === undefined || argv[i + 1].startsWith('-')))
             version = true;
         else if (token === '--schema')
             schema = true;
@@ -1837,6 +2044,8 @@ function extractBuiltinFlags(argv, options = {}) {
         llmsFull,
         mcp,
         help,
+        update,
+        updateCheck,
         version,
         schema,
         rest,
@@ -2001,7 +2210,7 @@ async function runMcpDoctor(name, commands, options) {
     const chunks = [];
     output.on('data', (chunk) => chunks.push(chunk.toString()));
     let serveError;
-    const done = Mcp.serve(name, options.version ?? '0.0.0', commands, {
+    const done = Mcp.serve(options.mcp?.name ?? name, options.version ?? '0.0.0', commands, {
         input,
         output,
         middlewares: options.middlewares,
@@ -2010,6 +2219,7 @@ async function runMcpDoctor(name, commands, options) {
         version: options.version,
         ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
         ...(options.mcp?.icons ? { icons: options.mcp.icons } : undefined),
+        ...(options.mcp?.title ? { title: options.mcp.title } : undefined),
         tools: { ...options.mcp?.tools, discovery: 'direct' },
     }).catch((error) => {
         serveError = error;
@@ -2136,6 +2346,82 @@ function formatFetchHelp(name, description) {
     lines.push('  --<key> <value>            Query string parameter');
     return lines.join('\n');
 }
+async function resolveFsCommandsRoot(directory) {
+    if (directory)
+        return { directory: fileURLToPath(directory) };
+    const entry = process.argv[1];
+    if (!entry)
+        throw new Error('Could not infer the filesystem command directory without an executed entrypoint. Pass a directory URL to `fs()`.');
+    const resolved = path.resolve(entry);
+    try {
+        const real = await fs.realpath(resolved);
+        return { directory: path.dirname(real), exclude: real };
+    }
+    catch (error) {
+        if (error.code !== 'ENOENT')
+            throw error;
+        return { directory: path.dirname(resolved), exclude: resolved };
+    }
+}
+async function loadFsCommandRoutes(root) {
+    const routes = await FsCommands.discover(root.directory, { exclude: root.exclude });
+    return Promise.all(routes.map(async (route) => ({
+        ...route,
+        command: (await import(pathToFileURL(route.file).href)).default,
+    })));
+}
+function isFileCommand(value) {
+    return (typeof value === 'object' &&
+        value !== null &&
+        value[fileCommandSymbol] === true);
+}
+function mountFsCommand(commands, segments, command, source, globals) {
+    let scope = commands;
+    for (const [index, segment] of segments.entries()) {
+        const final = index === segments.length - 1;
+        const existing = scope.get(segment);
+        if (final) {
+            if (!existing)
+                scope.set(segment, command);
+            else if (isGroup(existing) && !existing.root) {
+                existing.root = command;
+                existing.description ??= command.description;
+            }
+            else
+                throw fsCommandCollision(segments, source);
+            assertNoGlobalOptionConflicts(segments.join(' '), command, globals);
+            for (const alias of command.aliases ?? []) {
+                if (scope.has(alias))
+                    throw fsCommandCollision([...segments.slice(0, -1), alias], source);
+                scope.set(alias, { _alias: true, target: segment });
+            }
+            return;
+        }
+        if (!existing) {
+            const group = { _group: true, commands: new Map() };
+            scope.set(segment, group);
+            scope = group.commands;
+            continue;
+        }
+        if (isAlias(existing) || isFetchGateway(existing))
+            throw fsCommandCollision(segments, source);
+        if (isGroup(existing)) {
+            scope = existing.commands;
+            continue;
+        }
+        const group = {
+            _group: true,
+            commands: new Map(),
+            description: existing.description,
+            root: existing,
+        };
+        scope.set(segment, group);
+        scope = group.commands;
+    }
+}
+function fsCommandCollision(segments, source) {
+    return new Error(`Filesystem command '${segments.join(' ')}' from '${source}' conflicts with an existing command or alias.`);
+}
 function isFetchSource(value) {
     if (typeof value === 'function')
         return true;
@@ -2183,6 +2469,8 @@ function assertNoGlobalOptionConflicts(path, entry, globals) {
     if (!globals || isFetchGateway(entry) || isAlias(entry))
         return;
     if (isGroup(entry)) {
+        if (entry.root)
+            assertNoGlobalOptionConflicts(path, entry.root, globals);
         for (const [name, child] of entry.commands)
             assertNoGlobalOptionConflicts(`${path} ${name}`, child, globals);
         return;
@@ -2205,6 +2493,8 @@ function assertNoGlobalOptionConflicts(path, entry, globals) {
 }
 /** @internal Maps CLI instances to their command maps. */
 export const toCommands = new WeakMap();
+/** @internal Maps CLI instances to asynchronous command registrations. */
+export const toPending = new WeakMap();
 /** @internal Maps CLI instances to their middleware arrays. */
 const toMiddlewares = new WeakMap();
 /** @internal Maps root CLI instances to their command definitions. */
@@ -2241,6 +2531,16 @@ function formatHumanCta(cta) {
         lines.push(`  ${c.command}${desc}`);
     }
     return lines.join('\n');
+}
+/** @internal Merges framework-generated CTA blocks while preserving the first description. */
+function mergeFormattedCtas(...blocks) {
+    const defined = blocks.filter((block) => block !== undefined);
+    if (defined.length === 0)
+        return undefined;
+    return {
+        description: defined[0].description,
+        commands: defined.flatMap((block) => block.commands),
+    };
 }
 /** @internal Type guard for sentinel results. */
 function hasRequiredArgs(args) {
@@ -2424,10 +2724,16 @@ async function handleStreaming(generator, ctx) {
     }
 }
 /** @internal Builds the `--llms` index manifest (name + description only) from the command tree. */
-function buildIndexManifest(commands, prefix = [], globalsSchema) {
+function buildIndexManifest(commands, prefix = [], globalsSchema, root) {
+    const entries = collectIndexCommands(commands, prefix);
+    if (root && prefix.length > 0)
+        entries.push({
+            name: prefix.join(' '),
+            ...(root.description ? { description: root.description } : undefined),
+        });
     return {
         version: 'incur.v1',
-        commands: collectIndexCommands(commands, prefix).sort((a, b) => a.name.localeCompare(b.name)),
+        commands: entries.sort((a, b) => a.name.localeCompare(b.name)),
         ...(globalsSchema ? { globals: Schema.toJsonSchema(globalsSchema) } : undefined),
     };
 }
@@ -2439,6 +2745,12 @@ function collectIndexCommands(commands, prefix) {
             continue;
         const path = [...prefix, name];
         if (isGroup(entry)) {
+            if (entry.root) {
+                const cmd = { name: path.join(' ') };
+                if (entry.root.description)
+                    cmd.description = entry.root.description;
+                result.push(cmd);
+            }
             result.push(...collectIndexCommands(entry.commands, path));
         }
         else {
@@ -2455,10 +2767,13 @@ function collectIndexCommands(commands, prefix) {
     return result;
 }
 /** @internal Builds the `--llms` manifest from the command tree. */
-function buildManifest(commands, prefix = [], globalsSchema) {
+function buildManifest(commands, prefix = [], globalsSchema, root) {
+    const entries = collectCommands(commands, prefix);
+    if (root && prefix.length > 0)
+        entries.push(commandManifestEntry(prefix, root));
     return {
         version: 'incur.v1',
-        commands: collectCommands(commands, prefix).sort((a, b) => a.name.localeCompare(b.name)),
+        commands: entries.sort((a, b) => a.name.localeCompare(b.name)),
         ...(globalsSchema ? { globals: Schema.toJsonSchema(globalsSchema) } : undefined),
     };
 }
@@ -2476,37 +2791,42 @@ function collectCommands(commands, prefix) {
             result.push(cmd);
         }
         else if (isGroup(entry)) {
+            if (entry.root)
+                result.push(commandManifestEntry(path, entry.root));
             result.push(...collectCommands(entry.commands, path));
         }
         else {
-            const cmd = { name: path.join(' ') };
-            if (entry.description)
-                cmd.description = entry.description;
-            const inputSchema = buildInputSchema(entry.args, entry.env, entry.options);
-            const outputSchema = entry.output ? Schema.toJsonSchema(entry.output) : undefined;
-            if (inputSchema || outputSchema) {
-                cmd.schema = {};
-                if (inputSchema?.args)
-                    cmd.schema.args = inputSchema.args;
-                if (inputSchema?.env)
-                    cmd.schema.env = inputSchema.env;
-                if (inputSchema?.options)
-                    cmd.schema.options = inputSchema.options;
-                if (outputSchema)
-                    cmd.schema.output = outputSchema;
-            }
-            const examples = formatExamples(entry.examples);
-            if (examples) {
-                const cmdName = path.join(' ');
-                cmd.examples = examples.map((e) => ({
-                    ...e,
-                    command: e.command ? `${cmdName} ${e.command}` : cmdName,
-                }));
-            }
-            result.push(cmd);
+            result.push(commandManifestEntry(path, entry));
         }
     }
     return result;
+}
+function commandManifestEntry(path, entry) {
+    const cmd = { name: path.join(' ') };
+    if (entry.description)
+        cmd.description = entry.description;
+    const inputSchema = buildInputSchema(entry.args, entry.env, entry.options);
+    const outputSchema = entry.output ? Schema.toJsonSchema(entry.output) : undefined;
+    if (inputSchema || outputSchema) {
+        cmd.schema = {};
+        if (inputSchema?.args)
+            cmd.schema.args = inputSchema.args;
+        if (inputSchema?.env)
+            cmd.schema.env = inputSchema.env;
+        if (inputSchema?.options)
+            cmd.schema.options = inputSchema.options;
+        if (outputSchema)
+            cmd.schema.output = outputSchema;
+    }
+    const examples = formatExamples(entry.examples);
+    if (examples) {
+        const cmdName = path.join(' ');
+        cmd.examples = examples.map((example) => ({
+            ...example,
+            command: example.command ? `${cmdName} ${example.command}` : cmdName,
+        }));
+    }
+    return cmd;
 }
 /** @internal Recursively collects leaf commands as `Skill.CommandInfo` for `--llms --format md`. */
 export function collectSkillCommands(commands, prefix, groups, rootCommand) {
@@ -2546,36 +2866,41 @@ export function collectSkillCommands(commands, prefix, groups, rootCommand) {
         else if (isGroup(entry)) {
             if (entry.description)
                 groups.set(path.join(' '), entry.description);
+            if (entry.root)
+                result.push(skillCommandEntry(path, entry.root));
             result.push(...collectSkillCommands(entry.commands, path, groups));
         }
         else {
-            const cmd = { name: path.join(' ') };
-            if (entry.description)
-                cmd.description = entry.description;
-            if (entry.args)
-                cmd.args = entry.args;
-            if (entry.env)
-                cmd.env = entry.env;
-            if (entry.hint)
-                cmd.hint = entry.hint;
-            if (isDestructive(entry))
-                cmd.hint = appendDestructiveHint(cmd.hint);
-            if (entry.options)
-                cmd.options = entry.options;
-            if (entry.output)
-                cmd.output = entry.output;
-            const examples = formatExamples(entry.examples);
-            if (examples) {
-                const cmdName = path.join(' ');
-                cmd.examples = examples.map((e) => ({
-                    ...e,
-                    command: e.command ? `${cmdName} ${e.command}` : cmdName,
-                }));
-            }
-            result.push(cmd);
+            result.push(skillCommandEntry(path, entry));
         }
     }
     return result.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
+}
+function skillCommandEntry(path, entry) {
+    const cmd = { name: path.join(' ') };
+    if (entry.description)
+        cmd.description = entry.description;
+    if (entry.args)
+        cmd.args = entry.args;
+    if (entry.env)
+        cmd.env = entry.env;
+    if (entry.hint)
+        cmd.hint = entry.hint;
+    if (isDestructive(entry))
+        cmd.hint = appendDestructiveHint(cmd.hint);
+    if (entry.options)
+        cmd.options = entry.options;
+    if (entry.output)
+        cmd.output = entry.output;
+    const examples = formatExamples(entry.examples);
+    if (examples) {
+        const name = path.join(' ');
+        cmd.examples = examples.map((example) => ({
+            ...example,
+            command: example.command ? `${name} ${example.command}` : name,
+        }));
+    }
+    return cmd;
 }
 function isDestructive(command) {
     return (command.destructive === true ||

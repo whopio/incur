@@ -19,6 +19,7 @@ type CommandEntry = {
     commands?: Map<string, CommandEntry> | undefined;
     description?: string | undefined;
     options?: z.ZodObject<any> | undefined;
+    root?: CommandEntry | undefined;
     target?: string | undefined;
 };
 /**

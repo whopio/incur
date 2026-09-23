@@ -10,31 +10,29 @@ export type { MiddlewareHandler };
 import type { Register } from './Register.js';
 import * as Skill from './Skill.js';
 /** A CLI application instance. Also used as a command group when mounted on a parent CLI. */
-export type Cli<commands extends CommandsMap = {}, vars extends z.ZodObject<any> | undefined = undefined, env extends z.ZodObject<any> | undefined = undefined, globals extends z.ZodObject<any> | undefined = undefined> = {
+export type Cli<commands extends CommandsMap = {}, vars extends z.ZodObject<any> | undefined = undefined, env extends z.ZodObject<any> | undefined = undefined, globals extends z.ZodObject<any> | undefined = undefined, cliName extends string = string> = {
     /** Registers a root command or mounts a sub-CLI as a command group. */
     command: {
         /** Registers a command. Returns the CLI instance for chaining. */
-        <const name extends string, const args extends z.ZodObject<any> | undefined = undefined, const cmdEnv extends z.ZodObject<any> | undefined = undefined, const options extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | undefined = undefined>(name: name, definition: CommandDefinition<args, cmdEnv, options, output, vars, env>): Cli<commands & {
+        <const name extends string, const args extends z.ZodObject<any> | undefined = undefined, const cmdEnv extends z.ZodObject<any> | undefined = undefined, const options extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | undefined = undefined>(name: name, definition: CommandDefinition<args, cmdEnv, options, output, vars, env, globals>): Cli<commands & {
             [key in name]: {
                 args: InferOutput<args>;
                 options: InferOutput<options>;
             };
-        }, vars, env, globals>;
+        }, vars, env, globals, cliName>;
         /** Mounts a sub-CLI as a command group. */
-        <const name extends string, const sub extends CommandsMap>(cli: Cli<sub, any, any, any> & {
-            name: name;
-        }): Cli<commands & {
-            [key in keyof sub & string as `${name} ${key}`]: sub[key];
-        }, vars, env, globals>;
+        <const subName extends string, const sub extends CommandsMap>(cli: Cli<sub, any, any, any, subName>): Cli<commands & {
+            [key in keyof sub & string as key extends subName ? subName : `${subName} ${key}`]: sub[key];
+        }, vars, env, globals, cliName>;
         /** Mounts a root CLI as a single command. */
-        <const name extends string, const args extends z.ZodObject<any> | undefined, const opts extends z.ZodObject<any> | undefined>(cli: Root<args, opts> & {
-            name: name;
+        <const subName extends string, const args extends z.ZodObject<any> | undefined, const opts extends z.ZodObject<any> | undefined>(cli: Root<args, opts> & {
+            name: subName;
         }): Cli<commands & {
-            [key in name]: {
+            [key in subName]: {
                 args: InferOutput<args>;
                 options: InferOutput<opts>;
             };
-        }, vars, env, globals>;
+        }, vars, env, globals, cliName>;
         /** Mounts a fetch handler as a command, optionally with OpenAPI spec for typed subcommands. */
         <const name extends string>(name: name, definition: {
             basePath?: string | undefined;
@@ -45,26 +43,28 @@ export type Cli<commands extends CommandsMap = {}, vars extends z.ZodObject<any>
             outputPolicy?: OutputPolicy | undefined;
             /** Set to `false` to hide this command group from MCP clients. */
             mcp?: false | undefined;
-        }): Cli<commands, vars, env, globals>;
+        }): Cli<commands, vars, env, globals, cliName>;
         /** Mounts a remote MCP server as a command group. */
         <const name extends string>(name: name, definition: {
             description?: string | undefined;
             mcp: McpSource.Source;
             outputPolicy?: OutputPolicy | undefined;
-        }): Cli<commands, vars, env, globals>;
+        }): Cli<commands, vars, env, globals, cliName>;
     };
     /** A short description of the CLI. */
     description?: string | undefined;
     /** The env schema, if declared. Use `typeof cli.env` with `middleware<vars, env>()` for typed middleware. */
     env: env;
     /** The name of the CLI application. */
-    name: string;
+    name: cliName;
     /** Handles an incoming HTTP request, resolves the matching command, and returns a JSON Response. */
     fetch(req: Request): Promise<Response>;
+    /** Discovers and registers command modules from a directory. Defaults to files beside the executed entrypoint. */
+    fs(directory?: URL | undefined): Cli<commands & Commands, vars, env, globals, cliName>;
     /** Parses argv, runs the matched command, and writes the output envelope to stdout. */
     serve(argv?: string[], options?: serve.Options): Promise<void>;
     /** Registers middleware that runs around every command. */
-    use(handler: MiddlewareHandler<vars, env, globals>): Cli<commands, vars, env, globals>;
+    use(handler: MiddlewareHandler<vars, env, globals>): Cli<commands, vars, env, globals, cliName>;
     /** The vars schema, if declared. Use `typeof cli.vars` with `middleware<vars, env>()` for typed middleware. */
     vars: vars;
 };
@@ -105,31 +105,35 @@ export type Cta<commands extends CommandsMap = Commands> = ([keyof commands] ext
     /** A short description of what the command does. */
     description?: string | undefined;
 });
+/** A command definition whose route is assigned by `fs()`. */
+export type FileCommand<args extends z.ZodObject<any> | undefined = undefined, env extends z.ZodObject<any> | undefined = undefined, options extends z.ZodObject<any> | undefined = undefined, output extends z.ZodType | undefined = undefined> = CommandDefinition<args, env, options, output>;
+/** Defines a command whose route is inferred from its module path by `fs()`. */
+export declare function command<const args extends z.ZodObject<any> | undefined = undefined, const env extends z.ZodObject<any> | undefined = undefined, const options extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | undefined = undefined>(definition: FileCommand<args, env, options, output>): FileCommand<args, env, options, output>;
 /** Creates a CLI with a root handler. Can still register subcommands which take precedence. */
-export declare function create<const args extends z.ZodObject<any> | undefined = undefined, const env extends z.ZodObject<any> | undefined = undefined, const opts extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | undefined = undefined, const vars extends z.ZodObject<any> | undefined = undefined, const globals extends z.ZodObject<any> | undefined = undefined>(name: string, definition: create.Options<args, env, opts, output, vars, globals> & {
+export declare function create<const name extends string, const args extends z.ZodObject<any> | undefined = undefined, const env extends z.ZodObject<any> | undefined = undefined, const opts extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | undefined = undefined, const vars extends z.ZodObject<any> | undefined = undefined, const globals extends z.ZodObject<any> | undefined = undefined>(name: name, definition: create.Options<args, env, opts, output, vars, globals> & {
     run: Function;
 }): Cli<{
     [key in typeof name]: {
         args: InferOutput<args>;
         options: InferOutput<opts>;
     };
-}, vars, env, globals>;
+}, vars, env, globals, name>;
 /** Creates a router CLI that registers subcommands. */
-export declare function create<const args extends z.ZodObject<any> | undefined = undefined, const env extends z.ZodObject<any> | undefined = undefined, const opts extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | undefined = undefined, const vars extends z.ZodObject<any> | undefined = undefined, const globals extends z.ZodObject<any> | undefined = undefined>(name: string, definition?: create.Options<args, env, opts, output, vars, globals>): Cli<{}, vars, env, globals>;
+export declare function create<const name extends string, const args extends z.ZodObject<any> | undefined = undefined, const env extends z.ZodObject<any> | undefined = undefined, const opts extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | undefined = undefined, const vars extends z.ZodObject<any> | undefined = undefined, const globals extends z.ZodObject<any> | undefined = undefined>(name: name, definition?: create.Options<args, env, opts, output, vars, globals>): Cli<{}, vars, env, globals, name>;
 /** Creates a CLI with a root handler from a single options object. Can still register subcommands. */
-export declare function create<const args extends z.ZodObject<any> | undefined = undefined, const env extends z.ZodObject<any> | undefined = undefined, const opts extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | undefined = undefined, const vars extends z.ZodObject<any> | undefined = undefined, const globals extends z.ZodObject<any> | undefined = undefined>(definition: create.Options<args, env, opts, output, vars, globals> & {
-    name: string;
+export declare function create<const name extends string, const args extends z.ZodObject<any> | undefined = undefined, const env extends z.ZodObject<any> | undefined = undefined, const opts extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | undefined = undefined, const vars extends z.ZodObject<any> | undefined = undefined, const globals extends z.ZodObject<any> | undefined = undefined>(definition: create.Options<args, env, opts, output, vars, globals> & {
+    name: name;
     run: Function;
 }): Cli<{
-    [key in (typeof definition)['name']]: {
+    [key in name]: {
         args: InferOutput<args>;
         options: InferOutput<opts>;
     };
-}, vars, env, globals>;
+}, vars, env, globals, name>;
 /** Creates a router CLI from a single options object (e.g. package.json). */
-export declare function create<const args extends z.ZodObject<any> | undefined = undefined, const env extends z.ZodObject<any> | undefined = undefined, const opts extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | undefined = undefined, const vars extends z.ZodObject<any> | undefined = undefined, const globals extends z.ZodObject<any> | undefined = undefined>(definition: create.Options<args, env, opts, output, vars, globals> & {
-    name: string;
-}): Cli<{}, vars, env, globals>;
+export declare function create<const name extends string, const args extends z.ZodObject<any> | undefined = undefined, const env extends z.ZodObject<any> | undefined = undefined, const opts extends z.ZodObject<any> | undefined = undefined, const output extends z.ZodType | undefined = undefined, const vars extends z.ZodObject<any> | undefined = undefined, const globals extends z.ZodObject<any> | undefined = undefined>(definition: create.Options<args, env, opts, output, vars, globals> & {
+    name: name;
+}): Cli<{}, vars, env, globals, name>;
 export declare namespace create {
     /** Options for creating a CLI. Provide `run` for a leaf CLI, omit it for a router. */
     type Options<args extends z.ZodObject<any> | undefined = undefined, env extends z.ZodObject<any> | undefined = undefined, options extends z.ZodObject<any> | undefined = undefined, output extends z.ZodType | undefined = undefined, vars extends z.ZodObject<any> | undefined = undefined, globals extends z.ZodObject<any> | undefined = undefined> = {
@@ -226,6 +230,8 @@ export declare namespace create {
             format: Formatter.Format;
             /** Whether the user explicitly passed `--format` or `--json`. */
             formatExplicit: boolean;
+            /** Parsed global options from the CLI-level globals schema. */
+            globals: InferOutput<globals>;
             /** The CLI name. */
             name: string;
             /** Return a success result with optional metadata (e.g. CTAs). */
@@ -246,13 +252,21 @@ export declare namespace create {
             instructions?: string | undefined;
             /** Icons shown by MCP clients when presenting the server. */
             icons?: Mcp.Icon[] | undefined;
+            /** MCP server and registration name. Defaults to the CLI name. */
+            name?: string | undefined;
             /** Disable HTTP MCP session management. Defaults to `true`. */
             stateless?: boolean | undefined;
+            /** Human-readable MCP server title. */
+            title?: string | undefined;
             /** Controls how command tools are exposed to MCP clients. */
             tools?: Mcp.ToolFilter | undefined;
         } | undefined;
-        /** Options for the built-in `skills add` command. */
-        sync?: {
+        /** Trusted npm package for generated commands when it differs from the CLI name. */
+        package?: string | undefined;
+        /** Options for the built-in `skills add` command. Pass `false` to disable generated skills. */
+        sync?: false | {
+            /** Text printed verbatim after the synced skills, before the suggestions. For whatever installing skills cannot do itself, such as authorizing an app. */
+            body?: string | undefined;
             /** Working directory for resolving `include` globs. Pass `import.meta.dirname` when running from a bin entry. Defaults to `process.cwd()`. */
             cwd?: string | undefined;
             /** Default grouping depth for skill files. Overridden by `--depth`. Defaults to `1`. */
@@ -262,8 +276,43 @@ export declare namespace create {
             /** Example prompts shown after sync to help users get started. */
             suggestions?: string[] | undefined;
         } | undefined;
+        /** Configures updates. Package installs are inferred; standalone binaries can provide custom callbacks. Pass `false` to disable automatic checks. */
+        update?: false | UpdateOptions | undefined;
         /** The CLI version string. */
         version?: string | undefined;
+    };
+    /** Options for update checks and installation. */
+    type UpdateOptions = {
+        /** Custom latest-version checker for non-package distributions. */
+        check?: ((context: UpdateCheckContext) => Promise<string | undefined> | string | undefined) | undefined;
+        /** Whether installation finishes after the updating process exits. */
+        deferred?: boolean | undefined;
+        /** Custom installer for non-package distributions. */
+        install?: ((context: UpdateInstallContext) => Promise<void> | void) | undefined;
+        /** Minimum time between update checks in milliseconds. Defaults to one day. */
+        interval?: number | undefined;
+        /** Registry package name. Defaults to the package containing the executing binary. */
+        package?: string | undefined;
+    };
+    /** Context passed to a custom update checker. */
+    type UpdateCheckContext = {
+        /** Current CLI version. */
+        current: string;
+        /** CLI name. */
+        name: string;
+        /** Registry package name when one is configured or inferred. */
+        package?: string | undefined;
+    };
+    /** Context passed to a custom update installer. */
+    type UpdateInstallContext = {
+        /** Current CLI version when available. */
+        current?: string | undefined;
+        /** Latest cached version when available. */
+        latest?: string | undefined;
+        /** CLI name. */
+        name: string;
+        /** Registry package name when one is configured or inferred. */
+        package?: string | undefined;
     };
 }
 export declare namespace serve {
@@ -297,6 +346,7 @@ type InternalGroup = {
     mcp?: false | undefined;
     middlewares?: MiddlewareHandler[] | undefined;
     outputPolicy?: OutputPolicy | undefined;
+    root?: CommandDefinition<any, any, any> | undefined;
     commands: Map<string, CommandEntry>;
 };
 /** @internal A fetch gateway entry. */
@@ -314,13 +364,15 @@ type InternalAlias = {
     target: string;
 };
 /** @internal Maps CLI instances to their command maps. */
-export declare const toCommands: WeakMap<Cli<{}, undefined, undefined, undefined>, Map<string, CommandEntry>>;
+export declare const toCommands: WeakMap<Cli<{}, undefined, undefined, undefined, string>, Map<string, CommandEntry>>;
+/** @internal Maps CLI instances to asynchronous command registrations. */
+export declare const toPending: WeakMap<Cli<{}, undefined, undefined, undefined, string>, Promise<void>[]>;
 /** @internal Maps root CLI instances to their command definitions. */
-export declare const toRootDefinition: WeakMap<Root<_args, _options>, CommandDefinition<any, any, any, undefined, undefined, undefined>>;
+export declare const toRootDefinition: WeakMap<Root<_args, _options>, CommandDefinition<any, any, any, undefined, undefined, undefined, undefined>>;
 /** @internal Maps CLI instances to their root options schema. */
-export declare const toRootOptions: WeakMap<Cli<{}, undefined, undefined, undefined>, z.ZodObject<any, z.core.$strip>>;
+export declare const toRootOptions: WeakMap<Cli<{}, undefined, undefined, undefined, string>, z.ZodObject<any, z.core.$strip>>;
 /** @internal Maps CLI instances to whether config file loading is enabled. */
-export declare const toConfigEnabled: WeakMap<Cli<{}, undefined, undefined, undefined>, boolean>;
+export declare const toConfigEnabled: WeakMap<Cli<{}, undefined, undefined, undefined, string>, boolean>;
 /** Descriptor for a CLI's custom global options schema and aliases. */
 export type GlobalsDescriptor = {
     schema: z.ZodObject<any>;
@@ -373,7 +425,7 @@ type InferReturn<output extends z.ZodType | undefined> = output extends z.ZodTyp
 /** @internal Inferred vars type from a Zod schema, or `{}` when no schema is provided. */
 type InferVars<vars extends z.ZodObject<any> | undefined> = vars extends z.ZodObject<any> ? z.output<vars> : {};
 /** @internal Defines a command's schema, handler, and metadata. */
-type CommandDefinition<args extends z.ZodObject<any> | undefined = undefined, env extends z.ZodObject<any> | undefined = undefined, options extends z.ZodObject<any> | undefined = undefined, output extends z.ZodType | undefined = undefined, vars extends z.ZodObject<any> | undefined = undefined, cliEnv extends z.ZodObject<any> | undefined = undefined> = CommandMeta<options> & {
+type CommandDefinition<args extends z.ZodObject<any> | undefined = undefined, env extends z.ZodObject<any> | undefined = undefined, options extends z.ZodObject<any> | undefined = undefined, output extends z.ZodType | undefined = undefined, vars extends z.ZodObject<any> | undefined = undefined, cliEnv extends z.ZodObject<any> | undefined = undefined, globals extends z.ZodObject<any> | undefined = undefined> = CommandMeta<options> & {
     /** Alternative names for this command (e.g. `['extensions', 'ext']` for an `extension` command). */
     aliases?: string[] | undefined;
     /** Zod schema for positional arguments. */
@@ -413,7 +465,7 @@ type CommandDefinition<args extends z.ZodObject<any> | undefined = undefined, en
      */
     outputPolicy?: OutputPolicy | undefined;
     /** Middleware that runs only for this command, after root and group middleware. */
-    middleware?: MiddlewareHandler<vars, cliEnv>[] | undefined;
+    middleware?: MiddlewareHandler<vars, cliEnv, globals>[] | undefined;
     /** Alternative usage patterns shown in help output. */
     usage?: Usage<args, options>[] | undefined;
     /** The command handler. Return a value for single-return, or use `async *run` to stream chunks. */
@@ -438,6 +490,8 @@ type CommandDefinition<args extends z.ZodObject<any> | undefined = undefined, en
         format: Formatter.Format;
         /** Whether the user explicitly passed `--format` or `--json`. */
         formatExplicit: boolean;
+        /** Parsed global options from the CLI-level globals schema. */
+        globals: InferOutput<globals>;
         /** The CLI name. */
         name: string;
         /** Return a success result with optional metadata (e.g. CTAs). */

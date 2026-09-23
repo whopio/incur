@@ -69,6 +69,7 @@ type GeneratedGroup = {
     _group: true;
     description?: string | undefined;
     commands: Map<string, GeneratedEntry>;
+    root?: GeneratedCommand | undefined;
 };
 /** Resolves an OpenAPI document from a JSON object or JSON URL. */
 export declare function resolve(source: OpenAPISource, options?: resolve.Options): Promise<OpenAPISpec>;

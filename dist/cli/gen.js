@@ -1,19 +1,11 @@
-#!/usr/bin/env node
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
-import * as Cli from './Cli.js';
-import * as ConfigSchema from './internal/configSchema.js';
-import { importCli } from './internal/utils.js';
-import * as Typegen from './Typegen.js';
-const cli = Cli.create('incur', {
-    description: 'CLI for incur',
-    sync: {
-        depth: 1,
-        include: ['_root'],
-        suggestions: ['build a cli with incur', 'generate incur types'],
-    },
-}).command('gen', {
+import * as Cli from '../Cli.js';
+import * as ConfigSchema from '../internal/configSchema.js';
+import { importCli } from '../internal/utils.js';
+import * as Typegen from '../Typegen.js';
+export default Cli.command({
     description: 'Generate type definitions for development.',
     options: z.object({
         configSchema: z
@@ -40,6 +32,4 @@ const cli = Cli.create('incur', {
         return result;
     },
 });
-cli.serve();
-export default cli;
-//# sourceMappingURL=bin.js.map
+//# sourceMappingURL=gen.js.map

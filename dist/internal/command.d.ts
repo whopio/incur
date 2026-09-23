@@ -96,8 +96,8 @@ export declare const builtinCommands: ({
         }>;
     }, z.core.$strip>;
     hint(name: string): string;
-    subcommands?: undefined;
-    aliases?: undefined;
+    subcommands?: never;
+    aliases?: never;
 } | {
     name: string;
     description: string;
@@ -116,9 +116,9 @@ export declare const builtinCommands: ({
     } & {
         name: string;
     }))[];
-    args?: undefined;
-    hint?: undefined;
-    aliases?: undefined;
+    args?: never;
+    hint?: never;
+    aliases?: never;
 } | {
     name: string;
     aliases: string[];
@@ -137,8 +137,8 @@ export declare const builtinCommands: ({
     } & {
         name: string;
     }))[];
-    args?: undefined;
-    hint?: undefined;
+    args?: never;
+    hint?: never;
 })[];
 /** @internal Finds a builtin command by its name or alias. */
 export declare function findBuiltin(token: string): {
@@ -153,8 +153,8 @@ export declare function findBuiltin(token: string): {
         }>;
     }, z.core.$strip>;
     hint(name: string): string;
-    subcommands?: undefined;
-    aliases?: undefined;
+    subcommands?: never;
+    aliases?: never;
 } | {
     name: string;
     description: string;
@@ -173,9 +173,9 @@ export declare function findBuiltin(token: string): {
     } & {
         name: string;
     }))[];
-    args?: undefined;
-    hint?: undefined;
-    aliases?: undefined;
+    args?: never;
+    hint?: never;
+    aliases?: never;
 } | {
     name: string;
     aliases: string[];
@@ -194,8 +194,8 @@ export declare function findBuiltin(token: string): {
     } & {
         name: string;
     }))[];
-    args?: undefined;
-    hint?: undefined;
+    args?: never;
+    hint?: never;
 } | undefined;
 /** @internal Finds a builtin subcommand by its name or alias. */
 export declare function findBuiltinSubcommand(builtin: (typeof builtinCommands)[number], token: string): (CommandMeta<z.ZodObject<{

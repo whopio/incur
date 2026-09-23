@@ -15,7 +15,7 @@ export async function importCli(input) {
     const savedArgv = process.argv;
     const savedExit = process.exit;
     const savedWrite = process.stdout.write;
-    process.argv = [savedArgv[0]];
+    process.argv = [savedArgv[0], file];
     process.exit = (() => { });
     process.stdout.write = (() => true);
     try {
@@ -23,6 +23,9 @@ export async function importCli(input) {
         const cli = mod.default;
         if (!cli || !Cli.toCommands.has(cli))
             throw new Error(`Expected default export to be a \`Cli\` instance: ${input}`);
+        const pending = Cli.toPending.get(cli);
+        if (pending?.length)
+            await Promise.all(pending);
         return cli;
     }
     finally {

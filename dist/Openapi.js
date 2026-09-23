@@ -33,6 +33,8 @@ function addEntry(paths, segments, entry) {
     if ('_fetch' in entry)
         return;
     if ('_group' in entry) {
+        if (entry.root)
+            addCommand(paths, segments, entry.root);
         for (const [name, child] of entry.commands)
             addEntry(paths, [...segments, ...splitCommandName(name)], child);
         return;

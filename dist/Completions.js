@@ -40,7 +40,7 @@ export function complete(commands, rootCommand, argv, index, globals) {
         if (!entry)
             continue;
         if (entry._group && entry.commands) {
-            scope = { commands: entry.commands };
+            scope = { commands: entry.commands, leaf: entry.root };
         }
         else {
             scope = { commands: new Map(), leaf: entry };

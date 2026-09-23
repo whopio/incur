@@ -1,7 +1,3 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
-
 import {
   type AgentType,
   agents as agentRegistry,
@@ -10,8 +6,15 @@ import {
   getAgentTypes,
   upsertServer,
 } from 'add-mcp'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 
 import { detectRunner } from './internal/pm.js'
+
+const exactVersionPattern =
+  /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/
+const safePackageNamePattern = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/
 
 /**
  * Registers the CLI as an MCP server. Agent config writes run in-process through
@@ -23,7 +26,9 @@ export async function register(
   name: string,
   options: register.Options = {},
 ): Promise<register.Result> {
-  const command = options.command ?? defaultCommand(name, detectRunner())
+  const runner = detectRunner()
+  const command =
+    options.command ?? defaultCommand(options.cli ?? name, runner, options.package, options.version)
   const explicit = (options.agents ?? []).filter(Boolean)
   const [cmd, ...args] = splitCommand(command)
 
@@ -95,10 +100,16 @@ export declare namespace register {
   type Options = {
     /** Target specific agents (e.g. `'claude-code'`, `'cursor'`). */
     agents?: string[] | undefined
+    /** CLI name used to derive the default command. Defaults to the MCP server name. */
+    cli?: string | undefined
     /** Override the command agents will run. Defaults to `<runner> <name> --mcp`. */
     command?: string | undefined
     /** Install globally. Defaults to `true`. */
     global?: boolean | undefined
+    /** Trusted npm package used to run the CLI. */
+    package?: string | undefined
+    /** Exact CLI version appended to `package` when provided. */
+    version?: string | undefined
   }
 
   /** Result of a register operation. */
@@ -111,11 +122,12 @@ export declare namespace register {
 }
 
 /** @internal Builds the default MCP command for the current launch mode. */
-function defaultCommand(name: string, runner: string): string {
+function defaultCommand(name: string, runner: string, pkg?: string, version?: string): string {
   if (isStandaloneBinary()) return `"${process.execPath}" --mcp`
-  return shouldUseBareCommand(name)
+  const specifier = pkg !== undefined ? detectPackageSpecifier(name, pkg, version) : undefined
+  return shouldUseBareCommand(name, pkg)
     ? `${name} --mcp`
-    : `${runner} ${detectPackageSpecifier(name)} --mcp`
+    : `${runner} ${specifier ?? detectPackageSpecifier(name)} --mcp`
 }
 
 /** @internal Bun compiled binaries expose a virtual path as argv[1] (`/$bunfs/` on unix, `B:\~BUN\` on Windows); the real on-disk binary is process.execPath. */
@@ -134,51 +146,15 @@ function nodeModulesInfo(): { entry: string; root: string } | null {
 }
 
 /** @internal Uses the bare command only when the binary is expected on PATH. */
-function shouldUseBareCommand(name: string): boolean {
+function shouldUseBareCommand(name: string, pkg?: string): boolean {
   const bin = process.argv[1]
   if (!bin) return false
 
   const info = nodeModulesInfo()
-  if (info)
-    return (
-      !info.entry.startsWith('.bin/') &&
-      !packageDependsOn(info.root, entryPackageName() ?? name)
-    )
+  if (info) return !info.entry.startsWith('.bin/') && !packageDependsOn(info.root, pkg ?? name)
 
   const file = bin.replace(/\\/g, '/').split('/').pop()
   return file === name || file === `${name}.cmd` || file === `${name}.ps1`
-}
-
-/**
- * @internal Resolves the npm package name of the running entrypoint by walking
- * up from the (symlink-resolved) argv[1] to the nearest package.json. The bin
- * name is not necessarily the package name (e.g. bin `whop` in package
- * `@whop/cli`), and a runner command built from the bin name would install the
- * wrong package.
- */
-function entryPackageName(): string | null {
-  const bin = process.argv[1]
-  if (!bin) return null
-
-  let dir: string
-  try {
-    dir = dirname(realpathSync(bin))
-  } catch {
-    return null
-  }
-
-  while (true) {
-    const pkgPath = join(dir, 'package.json')
-    if (existsSync(pkgPath)) {
-      try {
-        const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
-        if (typeof pkg.name === 'string' && pkg.name) return pkg.name
-      } catch {}
-    }
-    const parent = dirname(dir)
-    if (parent === dir) return null
-    dir = parent
-  }
 }
 
 /** @internal Checks whether the entrypoint came from a project dependency install. */
@@ -197,23 +173,15 @@ function packageDependsOn(root: string, name: string): boolean {
   }
 }
 
-/** @internal Detects the package specifier used to run this CLI (handles dlx/npx URL and version installs). */
-export function detectPackageSpecifier(name: string): string {
-  const pkgName = entryPackageName() ?? name
-  const info = nodeModulesInfo()
-  if (!info) return pkgName
-
-  try {
-    const pkg = JSON.parse(readFileSync(join(info.root, 'package.json'), 'utf-8'))
-    const deps = pkg.dependencies ?? {}
-    const spec = deps[pkgName]
-    if (!spec || Object.keys(deps).length !== 1) return pkgName
-
-    if (/^https?:\/\//.test(spec) || spec.startsWith('file:')) return spec
-    if (/^\d/.test(spec)) return `${pkgName}@${spec}`
-  } catch {}
-
-  return pkgName
+/** @internal Detects the safe package specifier used to run this CLI. */
+export function detectPackageSpecifier(name: string, pkg?: string, version?: string): string {
+  if (pkg !== undefined) {
+    if (!safePackageNamePattern.test(pkg)) throw new Error(`Invalid npm package name: ${pkg}`)
+    if (version !== undefined && !exactVersionPattern.test(version))
+      throw new Error(`Invalid exact package version: ${version}`)
+    return version === undefined ? pkg : `${pkg}@${version}`
+  }
+  return name
 }
 
 /** Splits a command string into tokens, respecting single and double quotes. */
