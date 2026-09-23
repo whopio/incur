@@ -1,5 +1,18 @@
 # incur
 
+## 0.5.0
+
+### Minor Changes
+
+- d9eebb7: Add MCP server icon metadata for stdio and HTTP transports.
+
+### Patch Changes
+
+- 8868d0f: Encode array and object query params from OpenAPI specs in bracket notation (`ids[]=a`, `steps[1][event]=x`) instead of stringifying them.
+- 973bd1a: Parse nullable array options from OpenAPI schemas as repeatable CLI flags.
+- 81953e8: Coerce flag and env values to number literals, so options typed as a number union (such as an OpenAPI integer enum `5 | 10 | 15`) accept `--duration 15` instead of failing validation.
+- 6962ec4: Show descriptions for optional request-body flags, and mark required flags as `(required)` in help and the LLM manifest.
+
 ## 0.4.15
 
 ### Patch Changes
