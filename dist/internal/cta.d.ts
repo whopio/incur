@@ -19,4 +19,6 @@ export type FormattedCta = {
 };
 /** @internal Formats a CTA block into the output metadata shape. */
 export declare function formatCtaBlock(name: string, block: CtaBlock | undefined): FormattedCtaBlock | undefined;
+/** @internal Renders a formatted CTA block as plain text for inline tool output. */
+export declare function renderCtaText(block: FormattedCtaBlock): string;
 //# sourceMappingURL=cta.d.ts.map

@@ -37,7 +37,7 @@ function buildNode(commands, options) {
     const commandProps = {};
     for (const [name, entry] of commands) {
         if ('_group' in entry && entry._group) {
-            commandProps[name] = buildNode(entry.commands, undefined);
+            commandProps[name] = buildNode(entry.commands, entry.root?.options);
         }
         else if (!('_fetch' in entry)) {
             const cmd = entry;

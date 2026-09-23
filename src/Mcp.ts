@@ -3,7 +3,7 @@ import type { Readable, Writable } from 'node:stream'
 import { z } from 'zod'
 
 import * as Command from './internal/command.js'
-import { formatCtaBlock, type FormattedCtaBlock } from './internal/cta.js'
+import { formatCtaBlock, type FormattedCtaBlock, renderCtaText } from './internal/cta.js'
 import * as Json from './internal/json.js'
 import type { Handler as MiddlewareHandler } from './middleware.js'
 import * as Schema from './Schema.js'
@@ -22,7 +22,12 @@ export async function serve(
   const StdioServerTransport = await importStdioServerTransport(mcp, stdio)
 
   const server = new McpServer(
-    { name, version, ...(options.icons ? { icons: options.icons } : undefined) },
+    {
+      name,
+      version,
+      ...(options.title ? { title: options.title } : undefined),
+      ...(options.icons ? { icons: options.icons } : undefined),
+    },
     options.instructions ? { instructions: options.instructions } : undefined,
   )
 
@@ -70,12 +75,10 @@ async function importStdioServerTransport(
 }
 
 function importStdioModule(): Promise<StdioImportResult> {
-  return importModule('@modelcontextprotocol/server/stdio')
+  return import('@modelcontextprotocol/server/stdio')
     .then((module) => ({ module }))
     .catch((error: unknown) => ({ error }))
 }
-
-const importModule = (specifier: string): Promise<unknown> => import(specifier)
 
 export declare namespace serve {
   /** Options for the MCP server. */
@@ -96,6 +99,8 @@ export declare namespace serve {
     instructions?: string | undefined
     /** Icons shown by MCP clients when presenting the server. */
     icons?: Icon[] | undefined
+    /** Human-readable MCP server title. */
+    title?: string | undefined
     /** Filters which command tools are exposed to MCP clients. */
     tools?: ToolFilter | undefined
   }
@@ -181,24 +186,25 @@ export async function callTool(
     return { content: [{ type: 'text', text: Json.stringify(chunks) }] }
   }
 
-  if (!result.ok)
+  if (!result.ok) {
+    const cta = formatCtaBlock(options.name ?? tool.name, result.cta)
+    const text = result.error.fieldErrors
+      ? JSON.stringify(result.error)
+      : (result.error.message ?? 'Command failed')
     return {
-      content: [
-        {
-          type: 'text',
-          text: result.error.fieldErrors
-            ? JSON.stringify(result.error)
-            : (result.error.message ?? 'Command failed'),
-        },
-      ],
+      content: [{ type: 'text', text: cta ? `${text}\n\n${renderCtaText(cta)}` : text }],
+      ...(cta ? { _meta: { cta } } : undefined),
       isError: true,
     }
+  }
 
   const data = result.data ?? null
   const jsonData = Json.normalize(data)
   const cta = formatCtaBlock(options.name ?? tool.name, result.cta as Command.CtaBlock | undefined)
+  const text = Json.stringify(jsonData)
   return {
-    content: [{ type: 'text', text: Json.stringify(jsonData) }],
+    // Append rendered suggestions to the text so models see them (most clients drop _meta).
+    content: [{ type: 'text', text: cta ? `${text}\n\n${renderCtaText(cta)}` : text }],
     ...(data !== null && tool.outputSchema
       ? { structuredContent: jsonData as Record<string, unknown> }
       : undefined),
@@ -519,23 +525,27 @@ function collectToolEntries(
         ...parentMiddlewares,
         ...((entry.middlewares as MiddlewareHandler[] | undefined) ?? []),
       ]
+      if (entry.root && entry.root.mcp !== false)
+        result.push(toToolEntry(entry.root, path, groupMw))
       result.push(...collectToolEntries(entry.commands, path, groupMw))
-    } else {
-      const mcp = entry.mcp === false ? undefined : entry.mcp
-      const outputSchema = entry.output ? mcpOutputSchema(entry.output) : undefined
-      result.push({
-        name: mcp?.name ?? path.join('_'),
-        description: mcp?.description ?? entry.description,
-        inputSchema: buildToolSchema(entry.args, entry.options),
-        ...(outputSchema ? { outputSchema } : undefined),
-        ...(mcp?.annotations ? { annotations: mcp.annotations } : undefined),
-        ...(mcp?.instructions ? { instructions: mcp.instructions } : undefined),
-        command: entry,
-        ...(parentMiddlewares.length > 0 ? { middlewares: parentMiddlewares } : undefined),
-      })
-    }
+    } else result.push(toToolEntry(entry, path, parentMiddlewares))
   }
   return result
+}
+
+function toToolEntry(entry: any, path: string[], middlewares: MiddlewareHandler[]): ToolEntry {
+  const mcp = entry.mcp === false ? undefined : entry.mcp
+  const outputSchema = entry.output ? mcpOutputSchema(entry.output) : undefined
+  return {
+    name: mcp?.name ?? path.join('_'),
+    description: mcp?.description ?? entry.description,
+    inputSchema: buildToolSchema(entry.args, entry.options),
+    ...(outputSchema ? { outputSchema } : undefined),
+    ...(mcp?.annotations ? { annotations: mcp.annotations } : undefined),
+    ...(mcp?.instructions ? { instructions: mcp.instructions } : undefined),
+    command: entry,
+    ...(middlewares.length > 0 ? { middlewares } : undefined),
+  }
 }
 
 /** Filters MCP tools by include and exclude patterns. */

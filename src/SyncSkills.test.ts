@@ -1,5 +1,5 @@
 import { Cli, SyncSkills, z } from 'incur'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -418,4 +418,63 @@ test('list results are sorted alphabetically', async () => {
   const result = await SyncSkills.list('test', commands)
   const names = result.map((s) => s.name)
   expect(names).toEqual([...names].sort())
+})
+
+test('installs included resources and refreshes them with the authored entrypoint', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'incur-resources-'))
+  process.env.XDG_DATA_HOME = join(tmp, 'state')
+  try {
+    const source = join(tmp, 'custom')
+    mkdirSync(join(source, 'references', 'nested'), { recursive: true })
+    writeFileSync(
+      join(source, 'SKILL.md'),
+      '---\nname: custom\ndescription: Authored workflow.\n---\nRead references/nested/guide.md',
+    )
+    writeFileSync(join(source, 'references', 'nested', 'guide.md'), 'first version')
+    const cli = Cli.create('custom', { description: 'Generated description' })
+    const options = { cwd: tmp, global: false, depth: 0, include: ['custom'] }
+    const commands = Cli.toCommands.get(cli)!
+    await SyncSkills.sync('custom', commands, options)
+    const installed = join(tmp, '.agents', 'skills', 'custom')
+    expect(readFileSync(join(installed, 'references', 'nested', 'guide.md'), 'utf8')).toBe(
+      'first version',
+    )
+    writeFileSync(join(source, 'references', 'nested', 'guide.md'), 'second version')
+    writeFileSync(join(installed, 'obsolete.md'), 'old resource')
+    await SyncSkills.sync('custom', commands, options)
+    expect(readFileSync(join(installed, 'references', 'nested', 'guide.md'), 'utf8')).toBe(
+      'second version',
+    )
+    expect(existsSync(join(installed, 'obsolete.md'))).toBe(false)
+    const listed = await SyncSkills.list('custom', commands, options)
+    expect(listed.find((s) => s.name === 'custom')?.description).toBe('Authored workflow.')
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('root includes install standard resources without unrelated repository files', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'incur-root-resources-'))
+  process.env.XDG_DATA_HOME = join(tmp, 'state')
+  try {
+    writeFileSync(
+      join(tmp, 'SKILL.md'),
+      '---\nname: root-test\ndescription: Root workflow.\n---\n# Root',
+    )
+    mkdirSync(join(tmp, 'references'))
+    writeFileSync(join(tmp, 'references', 'guide.md'), 'guide')
+    writeFileSync(join(tmp, 'private.txt'), 'not a skill resource')
+    const cli = Cli.create('root-test')
+    await SyncSkills.sync('root-test', Cli.toCommands.get(cli)!, {
+      cwd: tmp,
+      global: false,
+      depth: 0,
+      include: ['_root'],
+    })
+    const installed = join(tmp, '.agents', 'skills', 'root-test')
+    expect(readFileSync(join(installed, 'references', 'guide.md'), 'utf8')).toBe('guide')
+    expect(existsSync(join(installed, 'private.txt'))).toBe(false)
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
 })

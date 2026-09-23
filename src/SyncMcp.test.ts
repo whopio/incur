@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -84,19 +84,27 @@ test('returns bare name when multiple deps exist', () => {
   expect(detectPackageSpecifier('my-cli')).toBe('my-cli')
 })
 
-test('returns URL specifier for https dep', () => {
+test('returns bare name for https dep', () => {
   setupPkg({ 'my-cli': 'https://pkg.pr.new/my-cli@abc123' })
-  expect(detectPackageSpecifier('my-cli')).toBe('https://pkg.pr.new/my-cli@abc123')
+  expect(detectPackageSpecifier('my-cli')).toBe('my-cli')
 })
 
-test('returns URL specifier for file: dep', () => {
+test('returns bare name for file: dep', () => {
   setupPkg({ 'my-cli': 'file:../local-cli' })
-  expect(detectPackageSpecifier('my-cli')).toBe('file:../local-cli')
+  expect(detectPackageSpecifier('my-cli')).toBe('my-cli')
 })
 
-test('returns name@version for pinned version', () => {
+test('never emits dependency specs containing whitespace or flags', () => {
+  setupPkg({ 'my-cli': '1.2.3 --inspect' })
+  expect(detectPackageSpecifier('my-cli')).toBe('my-cli')
+  expect(detectPackageSpecifier('my-cli', '@example/cli')).toBe('@example/cli')
+  expect(() => detectPackageSpecifier('my-cli', 'https://example.com/cli', '1.2.3')).toThrow()
+  expect(() => detectPackageSpecifier('my-cli', '@example/cli', '1.2.3 --inspect')).toThrow()
+})
+
+test('returns bare name for pinned version', () => {
   setupPkg({ 'my-cli': '1.2.3' })
-  expect(detectPackageSpecifier('my-cli')).toBe('my-cli@1.2.3')
+  expect(detectPackageSpecifier('my-cli')).toBe('my-cli')
 })
 
 test('returns bare name for range specifier', () => {
@@ -118,19 +126,19 @@ function setupScopedEntry(rootDeps: Record<string, string> | null) {
   process.argv[1] = join(pkgDir, 'dist', 'bin.js')
 }
 
-test('resolves the package name from the entrypoint package.json when it differs from the bin name', () => {
+test('does not infer package identity from entrypoint metadata', () => {
   setupScopedEntry(null)
-  expect(detectPackageSpecifier('my-cli')).toBe('@scope/pkg')
+  expect(detectPackageSpecifier('my-cli')).toBe('my-cli')
 })
 
-test('resolves the root specifier under the entrypoint package name', () => {
+test('ignores scoped dependency URLs', () => {
   setupScopedEntry({ '@scope/pkg': 'https://pkg.pr.new/@scope/pkg@abc123' })
-  expect(detectPackageSpecifier('my-cli')).toBe('https://pkg.pr.new/@scope/pkg@abc123')
+  expect(detectPackageSpecifier('my-cli')).toBe('my-cli')
 })
 
-test('returns package-name@version for pinned scoped installs', () => {
+test('uses explicit package and version for scoped installs', () => {
   setupScopedEntry({ '@scope/pkg': '1.2.3' })
-  expect(detectPackageSpecifier('my-cli')).toBe('@scope/pkg@1.2.3')
+  expect(detectPackageSpecifier('my-cli', '@scope/pkg', '1.2.3')).toBe('@scope/pkg@1.2.3')
 })
 
 // --- register tests ---
@@ -237,7 +245,11 @@ test('register handles quoted command paths with spaces', async () => {
 test('register uses bare name for global binary installs', async () => {
   process.argv[1] = '/usr/local/bin/my-cli'
 
-  const result = await register('my-cli', { agents: ['claude-code'] })
+  const result = await register('my-cli', {
+    agents: ['claude-code'],
+    package: '@example/cli',
+    version: '1.2.3',
+  })
 
   expect(result.command).toBe('my-cli --mcp')
   expect(addMcp.upserts[0]!.config).toEqual({ command: 'my-cli', args: ['--mcp'] })
@@ -259,6 +271,55 @@ test('register uses runner for source entrypoints outside node_modules', async (
 
   expect(result.command).toMatch(/^(npx|pnpx|bunx)\s/)
   expect(result.command).toContain('my-cli --mcp')
+})
+
+test('register uses the detected runner with an explicit scoped package and version', async () => {
+  process.argv[1] = join(tmp, 'dist', 'bin.js')
+  vi.stubEnv('npm_config_user_agent', 'pnpm/10.0.0')
+  try {
+    const result = await register('my-cli', {
+      agents: ['amp'],
+      package: '@example/cli',
+      version: '1.2.3',
+    })
+
+    expect(result.command).toBe('pnpx @example/cli@1.2.3 --mcp')
+  } finally {
+    vi.unstubAllEnvs()
+  }
+})
+
+test('register uses runner for scoped dependency with different binary name', async () => {
+  setupPkg({ '@example/cli': '1.2.3' })
+  process.argv[1] = join(tmp, 'node_modules', '@example', 'cli', 'dist', 'bin.js')
+  vi.stubEnv('npm_config_user_agent', 'pnpm/10.0.0')
+  try {
+    const result = await register('my-cli', {
+      agents: ['amp'],
+      package: '@example/cli',
+      version: '1.2.3',
+    })
+
+    expect(result.command).toBe('pnpx @example/cli@1.2.3 --mcp')
+  } finally {
+    vi.unstubAllEnvs()
+  }
+})
+
+test('register derives the command from a different CLI name', async () => {
+  process.argv[1] = join(tmp, 'dist', 'bin.js')
+
+  const result = await register('example', { agents: ['amp'], cli: 'my-cli' })
+
+  expect(result.command).toMatch(/^(npx|pnpx|bunx)\s/)
+  expect(result.command).toContain('my-cli --mcp')
+
+  const configPath = join(fakeHome!, '.config', 'amp', 'settings.json')
+  const config = JSON.parse(readFileSync(configPath, 'utf-8'))
+  expect(config['amp.mcpServers']['example']).toEqual({
+    command: result.command.split(' ')[0],
+    args: ['my-cli', '--mcp'],
+  })
 })
 
 test('register uses bare name for global package entrypoints under node_modules', async () => {

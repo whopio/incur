@@ -17,6 +17,8 @@ export declare namespace formatRoot {
         description?: string | undefined;
         /** Custom global options schema and alias map. */
         globals?: GlobalsDescriptor | undefined;
+        /** Hide the built-in skills integration. */
+        hideSkills?: boolean | undefined;
         /** Show root-level built-in commands and flags. */
         root?: boolean | undefined;
         /** CLI version string. */
@@ -55,6 +57,8 @@ export declare namespace formatCommand {
         hint?: string | undefined;
         /** Hide global options section. */
         hideGlobalOptions?: boolean | undefined;
+        /** Hide the built-in skills integration. */
+        hideSkills?: boolean | undefined;
         /** Zod schema for named options/flags. */
         options?: z.ZodObject<any> | undefined;
         /** Show root-level built-in commands and flags. */

@@ -40,8 +40,10 @@
 - [**`--llms` flag**](#agent-discovery): token-efficient command manifest in Markdown or JSON schema
 - [**Well-formed I/O**](#well-formed-io): Schemas schemas for arguments, options, environment variables, and output
 - [**Inferred types**](#inferred-types): generic type flow from schemas to `run` callbacks with zero manual annotations
-- [**Global options**](#global-options): `--format`, `--full-output`, `--help`, `--json`, `--version` on every CLI for free
-- [**Light API surface**](#light-api-surface): `Cli.create()`, `.command()`, `.serve()` – that's it
+- [**Global options**](#global-options): `--format`, `--full-output`, `--help`, `--json`, `--update`, `--version` on every CLI for free
+- [**File-based commands**](#file-based-commands): load commands and nested sub-commands from sibling files and folders
+- [**Standalone binaries**](#standalone-binaries): build macOS, Linux, and Windows executables with verified updates and initial installers
+- [**Light API surface**](#light-api-surface): `Cli.create()`, `Cli.command()`, `.command()`, `.fs()`, and `.serve()`
 - [**Middleware**](#middleware): composable before/after hooks with typed dependency injection via `cli.use()`
 
 ## Quickprompt
@@ -124,6 +126,7 @@ $ greet --help
 #   --token-count                       Print token count of output instead of output
 #   --token-limit <n>                   Limit output to n tokens
 #   --token-offset <n>                  Skip first n tokens of output (for pagination)
+#   --update                            Update to latest version
 #   --version                           Show version
 ```
 
@@ -194,6 +197,7 @@ $ my-cli --help
 #   --token-count                       Print token count of output instead of output
 #   --token-limit <n>                   Limit output to n tokens
 #   --token-offset <n>                  Skip first n tokens of output (for pagination)
+#   --update                            Update to latest version
 #   --version                           Show version
 ```
 
@@ -251,7 +255,50 @@ $ my-cli --help
 #   --token-count                       Print token count of output instead of output
 #   --token-limit <n>                   Limit output to n tokens
 #   --token-offset <n>                  Skip first n tokens of output (for pagination)
+#   --update                            Update to latest version
 #   --version                           Show version
+```
+
+### File-based commands
+
+Use `fs()` when each command should live in its own file. The entrypoint owns the CLI configuration and discovers command files beside itself.
+
+```text
+src/
+└── cli/
+    ├── index.ts
+    ├── status.ts
+    └── project/
+        ├── index.ts
+        └── list.ts
+```
+
+<!-- prettier-ignore -->
+```ts
+// src/cli/index.ts
+import { Cli } from 'incur'
+
+await Cli.create('my-cli', { description: 'My CLI' })
+  .fs()
+  .serve()
+```
+
+```ts
+// src/cli/project/list.ts
+import { Cli, z } from 'incur'
+
+export default Cli.command({
+  options: z.object({ limit: z.number().default(20) }),
+  run(c) {
+    return { projects: [], limit: c.options.limit }
+  },
+})
+```
+
+Pass a directory for custom layouts:
+
+```ts
+await cli.fs(new URL('./routes/', import.meta.url)).serve()
 ```
 
 ### Mount APIs as CLIs
@@ -458,6 +505,20 @@ my-cli mcp add
 # Output machine-readable manifest
 my-cli --llms
 ```
+
+If the CLI binary name differs from its npm package, set `package` so generated MCP and skill commands use that trusted package, pinned when `version` is also supplied:
+
+```ts
+Cli.create('my-cli', { package: '@example/my-cli', version: '1.0.0' })
+```
+
+If a CLI distributes hand-authored skills through another installer, disable incur's generated skills integration entirely:
+
+```ts
+const cli = Cli.create('my-cli', { sync: false })
+```
+
+This removes the built-in `skills` commands, help and completion entries, and stale-skill notices.
 
 ### Session savings
 
@@ -849,6 +910,79 @@ $ my-cli whoami
 # → debug: true
 ```
 
+### Standalone binaries
+
+Build standalone macOS, Linux, and Windows executables with Bun:
+
+```sh
+incur build ./src/bin.ts --installer
+```
+
+The default build creates unsigned binaries for every supported platform. Add `--installer` to include shell installation scripts.
+
+Copy this workflow to `.github/workflows/binary-release.yml` to prepare a release and upload its unsigned binaries:
+
+```yaml
+name: Binary Release
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: binary-release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - id: release
+        uses: wevm/incur/release@v1
+```
+
+After the release is published, users can install without a package manager:
+
+```sh
+curl -fsSL https://github.com/<org>/<repo>/releases/latest/download/install.sh | sh
+```
+
+Connect those assets to a public GitHub repository:
+
+```ts
+import { Binary, Cli } from 'incur'
+
+const cli = Cli.create('my-cli', {
+  update: Binary.github({ repository: 'example/my-cli' }),
+})
+```
+
+The provider activates only inside an Incur-built executable. Source and package installations continue to use their inferred npm, pnpm, or Bun updater. See the [standalone binary guide](./docs/binaries.md) for installer behavior, the target matrix, and the release action.
+
+### Update notices
+
+Incur CLIs installed from npm packages automatically check for updates in human TTY mode. Results are cached for one day and refreshed in a detached process, so checks do not delay commands or change agent, JSON, MCP, help, or completion output.
+
+When a newer version is available, Incur suggests the built-in root flag:
+
+```text
+Update available for my-cli:
+  my-cli --update  # upgrade from 1.0.0 to 1.1.0
+```
+
+Running `my-cli --update` uses npm, pnpm, or Bun to update the package globally. Incur infers the package and package manager from the executing binary. Set `update.package` to opt into registry updates when package metadata is unavailable:
+
+```ts
+const cli = Cli.create('my-cli', {
+  update: { package: '@example/my-cli' },
+  version: '1.0.0',
+})
+```
+
+Standalone executables configured with `Binary.github` use the same detached check path and install only after an explicit `--update`.
+
+Set `update: false` to disable automatic notices. `NO_UPDATE_NOTIFIER`, `CI`, and `npm_config_update_notifier=false` also suppress notices without disabling explicit updates.
+
 ### Global options
 
 Every incur CLI includes these flags automatically:
@@ -866,6 +1000,7 @@ Every incur CLI includes these flags automatically:
 | `--token-count`          | Print token count of output instead of output          |
 | `--token-limit <n>`      | Limit output to n tokens (for pagination)              |
 | `--token-offset <n>`     | Skip first n tokens of output (for pagination)         |
+| `--update`               | Update to the latest version                           |
 | `--version`              | Print CLI version                                      |
 
 ### Config file

@@ -24,8 +24,11 @@ function collectEntries(commands, prefix) {
     const result = [];
     for (const [name, entry] of commands) {
         const path = [...prefix, name];
-        if ('_group' in entry && entry._group)
+        if ('_group' in entry && entry._group) {
+            if (entry.root)
+                result.push({ name: path.join(' '), args: entry.root.args, options: entry.root.options });
             result.push(...collectEntries(entry.commands, path));
+        }
         else
             result.push({ name: path.join(' '), args: entry.args, options: entry.options });
     }

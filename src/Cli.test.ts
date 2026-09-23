@@ -1,10 +1,14 @@
 import { Cli, Errors, Mcp, z } from 'incur'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import * as Command from './internal/command.js'
+import * as Update from './internal/update.js'
 import * as SyncMcp from './SyncMcp.js'
+import * as SyncSkills from './SyncSkills.js'
 
 const originalIsTTY = process.stdout.isTTY
 beforeAll(() => {
@@ -16,6 +20,10 @@ afterAll(() => {
 
 let __mockSkillsHash: string | undefined
 let __mockSkillsInstalled = true
+let __mockInstall: Error | Update.install.Result | undefined
+let __mockInstallCalls = 0
+let __mockRefreshCalls = 0
+let __mockUpdate: Update.check.Result | undefined
 
 vi.mock('./SyncSkills.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./SyncSkills.js')>()
@@ -23,6 +31,22 @@ vi.mock('./SyncSkills.js', async (importOriginal) => {
     ...actual,
     hasInstalledSkills: () => __mockSkillsInstalled,
     readHash: () => __mockSkillsHash,
+  }
+})
+
+vi.mock('./internal/update.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./internal/update.js')>()
+  return {
+    ...actual,
+    check: () => __mockUpdate,
+    install: async () => {
+      __mockInstallCalls++
+      if (__mockInstall instanceof Error) throw __mockInstall
+      return __mockInstall ?? { name: 'frog' }
+    },
+    refresh: async () => {
+      __mockRefreshCalls++
+    },
   }
 })
 
@@ -55,6 +79,22 @@ function mockMcpServeResponses(responses: unknown[]) {
         `${typeof response === 'string' ? response : JSON.stringify(response)}\n`,
       )
   })
+}
+
+function countRetainedMcpExchanges() {
+  return new Promise<{ aborted: number; requests: number; responses: number }>(
+    (resolve, reject) => {
+      execFile(
+        process.execPath,
+        ['--expose-gc', '--import', 'tsx', 'test/fixtures/mcp-memory.ts'],
+        { cwd: join(import.meta.dirname, '..'), timeout: 30_000 },
+        (error, stdout, stderr) => {
+          if (error) reject(new Error(stderr.trim() || stdout.trim() || error.message))
+          else resolve(JSON.parse(stdout.trim()))
+        },
+      )
+    },
+  )
 }
 
 function createConfigCli(flag?: string) {
@@ -115,6 +155,199 @@ describe('command', () => {
       },
     })
     expect(result).toBe(cli)
+  })
+
+  test('mounts a callable sub-app with child commands', async () => {
+    const project = Cli.create('project', {
+      run: () => ({ route: 'project' }),
+    }).command('list', {
+      run: () => ({ route: 'project list' }),
+    })
+    const cli = Cli.create('test').command(project)
+
+    expect(JSON.parse((await serve(cli, ['project', '--json'])).output)).toEqual({
+      route: 'project',
+    })
+    expect(JSON.parse((await serve(cli, ['project', 'list', '--json'])).output)).toEqual({
+      route: 'project list',
+    })
+  })
+})
+
+describe('fs', () => {
+  let directory: string
+  let root: string
+  let commandId = 0
+
+  beforeEach(async () => {
+    directory = await mkdtemp(join(tmpdir(), 'incur-fs-commands-'))
+    root = join(directory, 'cli')
+  })
+
+  afterEach(async () => {
+    await rm(directory, { force: true, recursive: true })
+  })
+
+  async function writeCommand(relative: string, definition: Cli.FileCommand<any, any, any, any>) {
+    const file = join(root, relative)
+    const key = `incur.test.fs-command.${commandId++}`
+    ;(globalThis as any)[Symbol.for(key)] = definition
+    await mkdir(dirname(file), { recursive: true })
+    await writeFile(file, `export default globalThis[Symbol.for(${JSON.stringify(key)})]\n`)
+  }
+
+  test('infers flat commands, nested sub-commands, and callable groups', async () => {
+    await writeCommand(
+      'status.mjs',
+      Cli.command({ description: 'Show status', run: () => ({ status: 'ok' }) }),
+    )
+    await writeCommand(
+      'project/index.mjs',
+      Cli.command({ description: 'Show project', run: () => ({ project: 'root' }) }),
+    )
+    await writeCommand(
+      'project/list.mjs',
+      Cli.command({ description: 'List projects', run: () => ({ projects: [] }) }),
+    )
+
+    const cli = Cli.create('test')
+    cli.fs(pathToFileURL(root))
+
+    expect(JSON.parse((await serve(cli, ['status', '--json'])).output)).toEqual({ status: 'ok' })
+    expect(JSON.parse((await serve(cli, ['project', '--json'])).output)).toEqual({
+      project: 'root',
+    })
+    expect(JSON.parse((await serve(cli, ['project', 'list', '--json'])).output)).toEqual({
+      projects: [],
+    })
+
+    const help = await serve(cli, ['project', '--help'])
+    expect(help.output).toContain('Show project')
+    expect(help.output).toContain('list')
+
+    const manifest = await serve(cli, ['--llms-full', '--format', 'json'])
+    expect(JSON.parse(manifest.output).commands.map((entry: any) => entry.name)).toEqual([
+      'project',
+      'project list',
+      'status',
+    ])
+
+    await expect(cli.fetch(new Request('https://example.test/project'))).resolves.toMatchObject({
+      status: 200,
+    })
+    await expect(
+      cli.fetch(new Request('https://example.test/project/list')),
+    ).resolves.toMatchObject({ status: 200 })
+  })
+
+  test('defaults to commands beside the executed entrypoint', async () => {
+    await writeCommand('status.mjs', Cli.command({ run: () => ({ status: 'ok' }) }))
+    const entry = join(root, 'index.mjs')
+    await writeFile(entry, '')
+    const cli = Cli.create('test')
+    const argv = process.argv
+    process.argv = [argv[0]!, entry]
+    try {
+      cli.fs()
+    } finally {
+      process.argv = argv
+    }
+
+    const result = await serve(cli, ['status', '--json'])
+    expect(JSON.parse(result.output)).toEqual({ status: 'ok' })
+  })
+
+  test('defaults to commands beside a symlinked entrypoint target', async () => {
+    await writeCommand('status.mjs', Cli.command({ run: () => ({ status: 'ok' }) }))
+    const entry = join(root, 'index.mjs')
+    const bin = join(directory, 'bin', 'test')
+    await writeFile(entry, '')
+    await mkdir(dirname(bin))
+    await symlink(entry, bin)
+
+    const cli = Cli.create('test')
+    const argv = process.argv
+    process.argv = [argv[0]!, bin]
+    try {
+      cli.fs()
+    } finally {
+      process.argv = argv
+    }
+
+    const result = await serve(cli, ['status', '--json'])
+    expect(JSON.parse(result.output)).toEqual({ status: 'ok' })
+  })
+
+  test('awaits filesystem commands from mounted sub-command CLIs', async () => {
+    await writeCommand('list.mjs', Cli.command({ run: () => ({ projects: [] }) }))
+    const project = Cli.create('project').fs(pathToFileURL(root))
+    const cli = Cli.create('test').command(project)
+
+    const result = await serve(cli, ['project', 'list', '--json'])
+    expect(JSON.parse(result.output)).toEqual({ projects: [] })
+  })
+
+  test('validates parent globals after mounted filesystem commands load', async () => {
+    await writeCommand(
+      'deploy.mjs',
+      Cli.command({
+        options: z.object({ rpcUrl: z.string() }),
+        run: () => ({}),
+      }),
+    )
+    const admin = Cli.create('admin').fs(pathToFileURL(root))
+    const cli = Cli.create('test', {
+      globals: z.object({ rpcUrl: z.string() }),
+    }).command(admin)
+
+    await expect(serve(cli, ['admin', 'deploy', '--rpc-url', 'http://x'])).rejects.toThrow(
+      /conflicts with a global option/,
+    )
+  })
+
+  test('ignores private, test, declaration, and unsupported files', async () => {
+    await writeCommand('status.mjs', Cli.command({ run: () => ({ status: 'ok' }) }))
+    await writeCommand('_private.mjs', Cli.command({ run: () => ({ private: true }) }))
+    await writeCommand('status.test.mjs', Cli.command({ run: () => ({ test: true }) }))
+    await writeCommand('status.test-d.ts', Cli.command({ run: () => ({ typeTest: true }) }))
+    await writeFile(join(root, 'types.d.ts'), 'export type Value = string\n')
+    await writeFile(join(root, 'notes.txt'), 'not a command\n')
+
+    const cli = Cli.create('test')
+    cli.fs(pathToFileURL(root))
+    await Promise.all(Cli.toPending.get(cli)!)
+    expect([...Cli.toCommands.get(cli)!.keys()]).toEqual(['status'])
+  })
+
+  test('rejects duplicate routes across extensions', async () => {
+    await mkdir(root, { recursive: true })
+    await writeFile(join(root, 'status.js'), 'export default {}\n')
+    await writeFile(join(root, 'status.mjs'), 'export default {}\n')
+
+    const cli = Cli.create('test').fs(pathToFileURL(root))
+    await expect(Promise.all(Cli.toPending.get(cli)!)).rejects.toThrow(
+      "Duplicate filesystem command 'status'",
+    )
+  })
+
+  test('requires lowercase kebab-case route segments', async () => {
+    await mkdir(root, { recursive: true })
+    await writeFile(join(root, 'badName.mjs'), 'export default {}\n')
+
+    const cli = Cli.create('test').fs(pathToFileURL(root))
+    await expect(Promise.all(Cli.toPending.get(cli)!)).rejects.toThrow(
+      "Invalid filesystem command segment 'badName'",
+    )
+  })
+
+  test('requires command modules to use Cli.command()', async () => {
+    await mkdir(root, { recursive: true })
+    await writeFile(join(root, 'status.mjs'), 'export default { run() {} }\n')
+
+    const cli = Cli.create('test').fs(pathToFileURL(root))
+    await expect(Promise.all(Cli.toPending.get(cli)!)).rejects.toThrow(
+      'to be created with `Cli.command()`',
+    )
   })
 })
 
@@ -1446,6 +1679,19 @@ describe('--llms', () => {
     const manifest = JSON.parse(output)
     expect(manifest.commands.map((c: any) => c.name).sort()).toEqual(['auth login', 'auth logout'])
   })
+
+  test('scoping to a callable group leaf omits the group root', async () => {
+    const project = Cli.create('project', {
+      description: 'Show project',
+      run: () => ({}),
+    }).command('list', { description: 'List projects', run: () => ({}) })
+    const cli = Cli.create('test').command(project)
+
+    const { output } = await serve(cli, ['project', 'list', '--llms-full', '--format', 'json'])
+    expect(JSON.parse(output).commands.map((command: any) => command.name)).toEqual([
+      'project list',
+    ])
+  })
 })
 
 describe('--schema', () => {
@@ -2233,6 +2479,7 @@ describe('help', () => {
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
+        --update                            Update to latest version
         --version                           Show version
       "
     `)
@@ -2271,6 +2518,7 @@ describe('help', () => {
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
+        --update                            Update to latest version
         --version                           Show version
       "
     `)
@@ -2528,6 +2776,18 @@ describe('help', () => {
     `)
   })
 
+  test('passes --version values to command options', async () => {
+    const cli = Cli.create('tool', { version: '1.2.3' })
+    cli.command('build', {
+      options: z.object({ version: z.string() }),
+      run: (context) => context.options,
+    })
+
+    const { output } = await serve(cli, ['build', '--version', '9.8.7', '--format', 'json'])
+
+    expect(JSON.parse(output)).toEqual({ version: '9.8.7' })
+  })
+
   test('--help takes precedence over --version', async () => {
     const cli = Cli.create('tool', { version: '1.2.3' })
     cli.command('ping', { description: 'Ping', run: () => ({}) })
@@ -2557,6 +2817,7 @@ describe('help', () => {
         --token-count                       Print token count of output (instead of output)
         --token-limit <n>                   Limit output to n tokens
         --token-offset <n>                  Skip first n tokens of output
+        --update                            Update to latest version
         --version                           Show version
       "
     `)
@@ -2922,6 +3183,29 @@ describe('built-in commands', () => {
       expect(output).toContain('Try asking:')
       expect(output).toContain('"Check health"')
       expect(output).toContain('"command": "pnpm test --mcp"')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('mcp add registers an overridden MCP name with the CLI command', async () => {
+    const spy = vi
+      .spyOn(SyncMcp, 'register')
+      .mockResolvedValue({ command: 'pnpm test --mcp', agents: ['Cursor'] })
+    try {
+      const cli = Cli.create('test', { mcp: { name: 'example' } })
+      cli.command('ping', { run: () => ({ pong: true }) })
+      const { output, exitCode } = await serve(cli, ['mcp', 'add'])
+
+      expect(exitCode).toBeUndefined()
+      expect(spy).toHaveBeenCalledWith('example', {
+        agents: [],
+        cli: 'test',
+        command: undefined,
+        global: true,
+      })
+      expect(output).toContain('Registered example as MCP server')
+      expect(output).toContain('Agents can now use example tools.')
     } finally {
       spy.mockRestore()
     }
@@ -3361,6 +3645,44 @@ describe('built-in commands', () => {
     expect(output).toContain('--no-global')
   })
 
+  test('skills add prints the sync body before the suggestions', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'clac-body-'))
+    try {
+      const cli = Cli.create('test', {
+        sync: {
+          body: 'Steps to finish:\n  1. Authorize the app\n  2. Add the line to AGENTS.md',
+          cwd: tmp,
+          suggestions: ['do the thing'],
+        },
+      })
+      cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+      const { output } = await serve(cli, ['skills', 'add', '--no-global'])
+
+      // Verbatim: the CLI owns the wording, including any heading.
+      expect(output).toContain('Steps to finish:\n  1. Authorize the app')
+      expect(output).toContain('2. Add the line to AGENTS.md')
+      expect(output.indexOf('Steps to finish')).toBeLessThan(output.indexOf('Try asking'))
+    } finally {
+      await rm(tmp, { force: true, recursive: true })
+    }
+  })
+
+  test('skills add carries the sync body in the structured output', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'clac-body-json-'))
+    try {
+      const cli = Cli.create('test', {
+        sync: { body: 'Authorize the app', cwd: tmp },
+      })
+      cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+      const { output } = await serve(cli, ['skills', 'add', '--no-global', '--json'])
+
+      expect(output).toContain('"body"')
+      expect(output).toContain('Authorize the app')
+    } finally {
+      await rm(tmp, { force: true, recursive: true })
+    }
+  })
+
   test('skills list --help shows description', async () => {
     const cli = Cli.create('test')
     cli.command('ping', { run: () => ({ pong: true }) })
@@ -3413,6 +3735,42 @@ describe('skills staleness', () => {
     const { output } = await serve(cli, ['ping'])
     expect(output).toContain('Skills are out of date:')
     expect(output).toContain('skills add')
+  })
+
+  test('uses the trusted scoped package and version for stale skills', async () => {
+    vi.stubEnv('npm_config_user_agent', 'pnpm/10.0.0')
+    try {
+      __mockSkillsHash = '0000000000000000'
+      const cli = Cli.create('test', { package: '@example/cli', version: '1.2.3' })
+      cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+      const { output } = await serve(cli, ['ping'])
+      expect(output).toContain('pnpx @example/cli@1.2.3 skills add')
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  test('sync false disables generated skills', async () => {
+    __mockSkillsHash = '0000000000000000'
+    const spy = vi.spyOn(SyncSkills, 'sync')
+    const cli = Cli.create('test', { sync: false })
+    cli.command('ping', { description: 'Health check', run: () => ({ pong: true }) })
+
+    try {
+      const help = await serve(cli, [])
+      expect(help.output).not.toContain('skills')
+
+      const command = await serve(cli, ['skills', 'add'])
+      expect(command.exitCode).toBe(1)
+      expect(command.output).toContain("'skills' is not a command")
+      expect(spy).not.toHaveBeenCalled()
+
+      const ping = await serve(cli, ['ping'])
+      expect(ping.output).not.toContain('Skills are out of date')
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   test('uses displayName for stale skills CTA when invoked directly', async () => {
@@ -3500,6 +3858,129 @@ describe('skills staleness', () => {
 
     const { output } = await serve(cli, ['--help'])
     expect(output).not.toContain('Skills are out of date')
+  })
+})
+
+describe('update notices', () => {
+  beforeEach(() => {
+    ;(process.stdout as any).isTTY = true
+    __mockInstall = undefined
+    __mockInstallCalls = 0
+    __mockRefreshCalls = 0
+    __mockUpdate = {
+      current: '1.0.0',
+      latest: '1.1.0',
+      name: 'frog',
+    }
+  })
+
+  afterEach(() => {
+    ;(process.stdout as any).isTTY = false
+    __mockUpdate = undefined
+  })
+
+  test('shows the root update CTA in human output', async () => {
+    const cli = Cli.create('frog')
+    cli.command('ping', { run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['ping'])
+
+    expect(output).toContain('Update available for frog:')
+    expect(output).toContain('frog --update')
+    expect(output).toContain('upgrade from 1.0.0 to 1.1.0')
+  })
+
+  test('allows update checks to be disabled', async () => {
+    const cli = Cli.create('frog', { update: false })
+    cli.command('ping', { run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['ping'])
+
+    expect(output).not.toContain('Update available')
+  })
+
+  test('omits update notices from structured agent output', async () => {
+    ;(process.stdout as any).isTTY = false
+    const cli = Cli.create('frog')
+    cli.command('ping', { run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['ping', '--format', 'json'])
+
+    expect(output).not.toContain('Update available')
+    expect(output).not.toContain('pnpm add')
+  })
+
+  test('updates through the configured installer', async () => {
+    __mockInstall = {
+      command: 'pnpm add --global frog@latest',
+      name: 'frog',
+    }
+    const cli = Cli.create('frog')
+
+    const { exitCode, output } = await serve(cli, ['--update'])
+
+    expect(exitCode).toBeUndefined()
+    expect(output).toContain('✓ Updated frog')
+    expect(output).toContain('pnpm add --global frog@latest')
+    expect(__mockInstallCalls).toBe(1)
+  })
+
+  test('formats update results for agents', async () => {
+    ;(process.stdout as any).isTTY = false
+    __mockInstall = { name: 'frog' }
+    const cli = Cli.create('frog')
+
+    const { output } = await serve(cli, ['--update', '--format', 'json'])
+
+    expect(JSON.parse(output)).toEqual({ name: 'frog' })
+  })
+
+  test('reports deferred binary updates as staged', async () => {
+    __mockInstall = { deferred: true, name: 'frog' }
+    const cli = Cli.create('frog')
+
+    const { output } = await serve(cli, ['--update'])
+
+    expect(output).toContain('✓ Update staged for frog')
+    expect(output).toContain('Installation will finish after this process exits.')
+    expect(output).not.toContain('✓ Updated frog')
+  })
+
+  test('reports update failures', async () => {
+    __mockInstall = new Error('binary installer failed')
+    const cli = Cli.create('frog')
+
+    const { exitCode, output } = await serve(cli, ['--update'])
+
+    expect(exitCode).toBe(1)
+    expect(output).toContain('UPDATE_FAILED')
+    expect(output).toContain('binary installer failed')
+  })
+
+  test('--help takes precedence over --update', async () => {
+    const cli = Cli.create('frog')
+    cli.command('ping', { description: 'Ping', run: () => ({ pong: true }) })
+
+    const { output } = await serve(cli, ['--help', '--update'])
+
+    expect(output).toContain('Usage: frog <command>')
+    expect(__mockInstallCalls).toBe(0)
+  })
+
+  test('runs hidden detached checks without output', async () => {
+    const cli = Cli.create('frog', {
+      update: {
+        check: () => '1.1.0',
+        install: () => {},
+      },
+      version: '1.0.0',
+    })
+
+    const { exitCode, output } = await serve(cli, [Update.checkFlag])
+
+    expect(exitCode).toBeUndefined()
+    expect(output).toBe('')
+    expect(__mockRefreshCalls).toBe(1)
   })
 })
 
@@ -5682,6 +6163,9 @@ describe('fetch', () => {
               sizes: ['512x512'],
             },
           ],
+          instructions: 'Use the example MCP.',
+          name: 'example',
+          title: 'Example MCP',
           tools: { discovery: 'direct' },
         },
       })
@@ -5702,6 +6186,7 @@ describe('fetch', () => {
       body: unknown,
       sessionId?: string,
       extraHeaders: Record<string, string> = {},
+      signal?: AbortSignal,
     ) {
       const headers: Record<string, string> = {
         'content-type': 'application/json',
@@ -5714,6 +6199,7 @@ describe('fetch', () => {
           method: 'POST',
           headers,
           body: JSON.stringify(body),
+          ...(signal ? { signal } : {}),
         }),
       )
     }
@@ -5756,11 +6242,13 @@ describe('fetch', () => {
       expect(res.headers.get('mcp-session-id')).toBeNull()
       const body = await res.json()
       expect({
+        instructions: body.result.instructions,
         serverInfo: body.result.serverInfo,
         hasTools: 'tools' in (body.result.capabilities ?? {}),
       }).toMatchInlineSnapshot(`
         {
           "hasTools": true,
+          "instructions": "Use the example MCP.",
           "serverInfo": {
             "icons": [
               {
@@ -5771,7 +6259,8 @@ describe('fetch', () => {
                 "src": "https://example.com/icon.png",
               },
             ],
-            "name": "test",
+            "name": "example",
+            "title": "Example MCP",
             "version": "1.0.0",
           },
         }
@@ -5802,6 +6291,78 @@ describe('fetch', () => {
         [
           "greet",
           "ping",
+        ]
+      `)
+    })
+
+    test('completed and aborted MCP exchanges are released', async () => {
+      expect(await countRetainedMcpExchanges()).toMatchInlineSnapshot(`
+        {
+          "aborted": 50,
+          "requests": 0,
+          "responses": 0,
+        }
+      `)
+    })
+
+    test('concurrent clients may reuse JSON-RPC ids', async () => {
+      let startFirst!: () => void
+      let startSecond!: () => void
+      let releaseFirst!: () => void
+      let releaseSecond!: () => void
+      const firstStarted = new Promise<void>((resolve) => (startFirst = resolve))
+      const secondStarted = new Promise<void>((resolve) => (startSecond = resolve))
+      const firstReleased = new Promise<void>((resolve) => (releaseFirst = resolve))
+      const secondReleased = new Promise<void>((resolve) => (releaseSecond = resolve))
+      const cli = Cli.create('test', {
+        version: '1.0.0',
+        mcp: { tools: { discovery: 'direct' } },
+      }).command('identify', {
+        run: async (c) => {
+          const authorization = c.request?.headers.get('authorization')
+          if (authorization === 'Bearer first') {
+            startFirst()
+            await firstReleased
+          } else {
+            startSecond()
+            await secondReleased
+          }
+          return { authorization }
+        },
+      })
+
+      const call = async (authorization: string) => {
+        const response = await mcpRequest(
+          cli,
+          {
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'tools/call',
+            params: { name: 'identify', arguments: {} },
+          },
+          undefined,
+          { authorization },
+        )
+        const body = await response.json()
+        return JSON.parse(body.result.content[0].text)
+      }
+
+      const first = call('Bearer first')
+      await firstStarted
+      const second = call('Bearer second')
+      await secondStarted
+      releaseFirst()
+      await new Promise(setImmediate)
+      releaseSecond()
+
+      expect(await Promise.all([first, second])).toMatchInlineSnapshot(`
+        [
+          {
+            "authorization": "Bearer first",
+          },
+          {
+            "authorization": "Bearer second",
+          },
         ]
       `)
     })
@@ -5913,6 +6474,51 @@ describe('fetch', () => {
       expect(res.status).toBe(405)
       expect(res.headers.get('allow')).toBe('POST')
       expect(await res.text()).toBe('')
+    })
+
+    test('POST /mcp rejects pre-aborted requests', async () => {
+      const controller = new AbortController()
+      controller.abort()
+      await expect(
+        mcpRequest(
+          mcpCli(),
+          { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} },
+          undefined,
+          {},
+          controller.signal,
+        ),
+      ).rejects.toThrowErrorMatchingInlineSnapshot(`[AbortError: This operation was aborted]`)
+    })
+
+    test('POST /mcp rejects requests aborted during server startup', async () => {
+      let runs = 0
+      const cli = Cli.create('test', {
+        version: '1.0.0',
+        mcp: { tools: { discovery: 'direct' } },
+      }).command('run', {
+        run: () => {
+          runs++
+          return { ok: true }
+        },
+      })
+      const controller = new AbortController()
+      const response = mcpRequest(
+        cli,
+        {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: 'run', arguments: {} },
+        },
+        undefined,
+        {},
+        controller.signal,
+      )
+      controller.abort()
+      await expect(response).rejects.toThrowErrorMatchingInlineSnapshot(
+        `[AbortError: This operation was aborted]`,
+      )
+      expect(runs).toMatchInlineSnapshot(`0`)
     })
 
     test('mcp.stateless false keeps stateful session handling', async () => {
@@ -6099,6 +6705,31 @@ describe('displayName', () => {
 })
 
 describe('globals', () => {
+  test('globals are parsed and available in command handlers', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ rpcUrl: z.string() }),
+    }).command('ping', {
+      run(c) {
+        return { url: c.globals.rpcUrl }
+      },
+    })
+
+    const { output } = await serve(cli, ['--rpc-url', 'http://example.com', 'ping', '--json'])
+    expect(JSON.parse(output)).toEqual({ url: 'http://example.com' })
+  })
+
+  test('globals are parsed and available in root handlers', async () => {
+    const cli = Cli.create('test', {
+      globals: z.object({ rpcUrl: z.string() }),
+      run(c) {
+        return { url: c.globals.rpcUrl }
+      },
+    })
+
+    const { output } = await serve(cli, ['--rpc-url', 'http://example.com', '--json'])
+    expect(JSON.parse(output)).toEqual({ url: 'http://example.com' })
+  })
+
   test('globals are parsed and available in middleware', async () => {
     const cli = Cli.create('test', {
       globals: z.object({ rpcUrl: z.string() }),
@@ -6240,13 +6871,16 @@ describe('globals', () => {
     expect(JSON.parse(output)).toEqual({ url: 'http://x' })
   })
 
-  test('globals conflict with builtins errors at create() time', () => {
-    expect(() =>
-      Cli.create('test', {
-        globals: z.object({ format: z.string() }),
-      }),
-    ).toThrow(/conflicts with a built-in flag/)
-  })
+  test.each(['format', 'incurBinaryApply'])(
+    'global %s conflicts with builtins at create() time',
+    (name) => {
+      expect(() =>
+        Cli.create('test', {
+          globals: z.object({ [name]: z.string() }),
+        }),
+      ).toThrow(/conflicts with a built-in flag/)
+    },
+  )
 
   test('command option conflicting with global errors at command() time', () => {
     const cli = Cli.create('test', {
@@ -6537,6 +7171,41 @@ describe('--mcp', () => {
       expect(tool?.instructions).toBe('Require confirmation before production deploys.')
     } finally {
       spy.mockRestore()
+    }
+  })
+})
+
+describe('custom human renderer', () => {
+  test('renders terminal output and preserves explicit machine formats', async () => {
+    const renderer = vi.fn(() => 'Readable result')
+    const cli = Cli.create('example', { renderer }).command('show', {
+      run: () => ({ value: 42 }),
+    })
+    try {
+      process.stdout.isTTY = true
+      expect((await serve(cli, ['show'])).output).toBe('Readable result\n')
+      renderer.mockClear()
+      expect(JSON.parse((await serve(cli, ['show', '--format', 'json'])).output)).toEqual({
+        value: 42,
+      })
+      expect(renderer).not.toHaveBeenCalled()
+      process.stdout.isTTY = false
+      expect((await serve(cli, ['show'])).output).toContain('42')
+      expect(renderer).not.toHaveBeenCalled()
+    } finally {
+      process.stdout.isTTY = false
+    }
+  })
+
+  test('falls back to default formatting when the renderer returns null', async () => {
+    const cli = Cli.create('example', { renderer: () => null }).command('show', {
+      run: () => ({ value: 42 }),
+    })
+    try {
+      process.stdout.isTTY = true
+      expect((await serve(cli, ['show'])).output).toContain('42')
+    } finally {
+      process.stdout.isTTY = false
     }
   })
 })

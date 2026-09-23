@@ -59,6 +59,7 @@ export async function execute(command, options) {
             error: errorFn,
             format,
             formatExplicit,
+            globals,
             name,
             ok: okFn,
             options: parsedOptions,

@@ -8,6 +8,13 @@ export function formatCtaBlock(name, block) {
         commands: block.commands.map((c) => formatCta(name, c)),
     };
 }
+/** @internal Renders a formatted CTA block as plain text for inline tool output. */
+export function renderCtaText(block) {
+    const lines = [block.description];
+    for (const c of block.commands)
+        lines.push(`  ${c.command}${c.description ? ` - ${c.description}` : ''}`);
+    return lines.join('\n');
+}
 /** @internal Formats a CTA by prefixing the CLI name. */
 function formatCta(name, cta) {
     if (typeof cta === 'string')
