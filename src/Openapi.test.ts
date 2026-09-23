@@ -389,6 +389,53 @@ describe('generateCommands', () => {
     })
   })
 
+  test('integer enum body properties accept numeric flag values', async () => {
+    const bodySpec = {
+      openapi: '3.1.0',
+      info: { title: 'Test API', version: '1.0.0' },
+      paths: {
+        '/media/generate': {
+          post: {
+            operationId: 'generateMedia',
+            requestBody: {
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      duration_seconds: { type: 'integer', enum: [5, 10, 15] },
+                    },
+                  },
+                },
+              },
+            },
+            responses: { '201': { description: 'Created' } },
+          },
+        },
+      },
+    }
+    let request: Request | undefined
+    const fetch = vi.fn(async (input: Request) => {
+      request = input.clone()
+      return Response.json({ id: 'media_test' })
+    })
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch,
+      openapi: bodySpec,
+    })
+
+    const help = await serve(cli, ['api', 'generateMedia', '--help'])
+    expect(help.output).toContain('--duration_seconds <5|10|15>')
+
+    const result = await serve(cli, ['api', 'generateMedia', '--duration_seconds', '15'])
+    expect(result.exitCode).toBeUndefined()
+    expect(await request!.json()).toEqual({ duration_seconds: 15 })
+
+    const invalid = await serve(cli, ['api', 'generateMedia', '--duration_seconds', '7'])
+    expect(invalid.exitCode).toBe(1)
+    expect(fetch).toHaveBeenCalledOnce()
+  })
+
   test('compact strips examples and oversized patterns', async () => {
     const longPattern = `^${'(?:x|y)'.repeat(60)}$`
     const compactSpec = {
