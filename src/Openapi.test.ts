@@ -270,6 +270,69 @@ describe('generateCommands', () => {
     expect(line('--note')).not.toContain('(required)')
   })
 
+  test('array and object query params encode in bracket notation', async () => {
+    const querySpec = {
+      openapi: '3.1.0',
+      info: { title: 'Test API', version: '1.0.0' },
+      paths: {
+        '/funnel': {
+          get: {
+            operationId: 'getFunnel',
+            parameters: [
+              { name: 'interval', in: 'query', schema: { type: 'string' } },
+              { name: 'ids', in: 'query', schema: { type: 'array', items: { type: 'string' } } },
+              {
+                name: 'steps',
+                in: 'query',
+                style: 'deepObject',
+                explode: true,
+                schema: {
+                  type: 'object',
+                  additionalProperties: {
+                    type: 'object',
+                    additionalProperties: { type: 'string' },
+                  },
+                },
+              },
+            ],
+            responses: { '200': { description: 'OK' } },
+          },
+        },
+      },
+    }
+    let request: Request | undefined
+    const fetch = vi.fn(async (input: Request) => {
+      request = input.clone()
+      return Response.json({ ok: true })
+    })
+    const cli = Cli.create('test', { description: 'test' }).command('api', {
+      fetch,
+      openapi: querySpec,
+    })
+
+    await serve(cli, [
+      'api',
+      'getFunnel',
+      '--interval',
+      'week',
+      '--ids',
+      'a',
+      '--ids',
+      'b',
+      '--steps',
+      '{"1":{"event":"pixel.page"},"2":{"event":"pixel.custom","custom_name":"cta"}}',
+    ])
+
+    expect([...new URL(request!.url).searchParams]).toEqual([
+      ['interval', 'week'],
+      ['ids[]', 'a'],
+      ['ids[]', 'b'],
+      ['steps[1][event]', 'pixel.page'],
+      ['steps[2][event]', 'pixel.custom'],
+      ['steps[2][custom_name]', 'cta'],
+    ])
+  })
+
   test('nullable array body properties accept repeated flags', async () => {
     const bodySpec = {
       openapi: '3.1.0',

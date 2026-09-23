@@ -771,6 +771,14 @@ function getGroup(commands: Map<string, GeneratedEntry>, segment: CommandSegment
   return group
 }
 
+/** Appends a query value in bracket notation: arrays as `key[]=`, objects as `key[child]=`, recursively. */
+function appendQuery(query: URLSearchParams, key: string, value: unknown) {
+  if (Array.isArray(value)) for (const item of value) appendQuery(query, `${key}[]`, item)
+  else if (value !== null && typeof value === 'object')
+    for (const [child, item] of Object.entries(value)) appendQuery(query, `${key}[${child}]`, item)
+  else query.append(key, String(value))
+}
+
 function createHandler(config: {
   basePath?: string | undefined
   bodyProps: Record<string, Record<string, unknown>>
@@ -796,7 +804,7 @@ function createHandler(config: {
     const query = new URLSearchParams()
     for (const p of config.queryParams) {
       const value = options[p.name]
-      if (value !== undefined) query.set(p.name, String(value))
+      if (value !== undefined) appendQuery(query, p.name, value)
     }
 
     // Build body from body properties

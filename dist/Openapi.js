@@ -542,6 +542,17 @@ function getGroup(commands, segment) {
     commands.set(segment.name, group);
     return group;
 }
+/** Appends a query value in bracket notation: arrays as `key[]=`, objects as `key[child]=`, recursively. */
+function appendQuery(query, key, value) {
+    if (Array.isArray(value))
+        for (const item of value)
+            appendQuery(query, `${key}[]`, item);
+    else if (value !== null && typeof value === 'object')
+        for (const [child, item] of Object.entries(value))
+            appendQuery(query, `${key}[${child}]`, item);
+    else
+        query.append(key, String(value));
+}
 function createHandler(config) {
     return async (context) => {
         const { args = {}, options = {} } = context;
@@ -557,7 +568,7 @@ function createHandler(config) {
         for (const p of config.queryParams) {
             const value = options[p.name];
             if (value !== undefined)
-                query.set(p.name, String(value));
+                appendQuery(query, p.name, value);
         }
         // Build body from body properties
         let body;
