@@ -62,3 +62,4 @@
 - Preserve Whop's human renderer, MCP icons, structured flag parsing, and in-process MCP registration when syncing upstream. Use explicit `package` metadata for generated runner commands instead of inferring dependency URLs from the working directory.
 - Stage included skill resources before agent installation. `_root` includes only `SKILL.md` and standard resource directories, never the entire repository.
 - `pnpm build` rewrites package.json for publishing. Save and restore the source manifest before running development commands after a build.
+- Keep lazy MCP SDK imports literal so Node and Bun bundles include the stdio transport subpath. Variable import specifiers escape bundling.

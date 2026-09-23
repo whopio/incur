@@ -75,12 +75,10 @@ async function importStdioServerTransport(
 }
 
 function importStdioModule(): Promise<StdioImportResult> {
-  return importModule('@modelcontextprotocol/server/stdio')
+  return import('@modelcontextprotocol/server/stdio')
     .then((module) => ({ module }))
     .catch((error: unknown) => ({ error }))
 }
-
-const importModule = (specifier: string): Promise<unknown> => import(specifier)
 
 export declare namespace serve {
   /** Options for the MCP server. */

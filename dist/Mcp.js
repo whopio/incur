@@ -41,11 +41,10 @@ async function importStdioServerTransport(mcp, stdio) {
     return result.module.StdioServerTransport;
 }
 function importStdioModule() {
-    return importModule('@modelcontextprotocol/server/stdio')
+    return import('@modelcontextprotocol/server/stdio')
         .then((module) => ({ module }))
         .catch((error) => ({ error }));
 }
-const importModule = (specifier) => import(specifier);
 /** @internal Executes a tool call and returns a CallToolResult. */
 export async function callTool(tool, params, options = {}) {
     const allMiddleware = [
