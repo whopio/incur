@@ -298,6 +298,7 @@ export async function generateCommands(spec, fetch, options = {}) {
             },
             args: argsSchema,
             options: optionsSchema,
+            responseSchema: successResponseSchema(op),
             run: createHandler({
                 basePath: options.basePath,
                 fetch,
@@ -312,6 +313,19 @@ export async function generateCommands(spec, fetch, options = {}) {
         });
     }
     return commands;
+}
+function successResponseSchema(operation) {
+    const responses = operation.responses;
+    if (!responses)
+        return undefined;
+    for (const code of Object.keys(responses).sort()) {
+        if (!/^2\d\d$/.test(code))
+            continue;
+        const schema = responses[code]?.content?.['application/json']?.schema;
+        if (schema && typeof schema === 'object')
+            return schema;
+    }
+    return undefined;
 }
 function mcpAnnotations(method) {
     const readOnly = ['get', 'head', 'options', 'trace'].includes(method);

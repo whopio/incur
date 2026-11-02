@@ -1,7 +1,3 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
-
 import {
   type AgentType,
   agents as agentRegistry,
@@ -10,6 +6,9 @@ import {
   getAgentTypes,
   upsertServer,
 } from 'add-mcp'
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 
 import { detectRunner } from './internal/pm.js'
 
@@ -141,8 +140,7 @@ function shouldUseBareCommand(name: string): boolean {
   const info = nodeModulesInfo()
   if (info)
     return (
-      !info.entry.startsWith('.bin/') &&
-      !packageDependsOn(info.root, entryPackageName() ?? name)
+      !info.entry.startsWith('.bin/') && !packageDependsOn(info.root, entryPackageName() ?? name)
     )
 
   const file = bin.replace(/\\/g, '/').split('/').pop()

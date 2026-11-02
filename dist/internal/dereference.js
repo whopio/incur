@@ -48,6 +48,29 @@ function walk(node, root, cache) {
         result[key] = walk(obj[key], root, cache);
     return result;
 }
+export function decycle(root) {
+    return decycleWalk(root, new Set());
+}
+function decycleWalk(node, ancestors) {
+    if (typeof node !== 'object' || node === null)
+        return node;
+    if (ancestors.has(node))
+        return { $circular: true };
+    ancestors.add(node);
+    let result;
+    if (Array.isArray(node)) {
+        result = node.map((item) => decycleWalk(item, ancestors));
+    }
+    else {
+        const out = {};
+        for (const key of Object.keys(node)) {
+            out[key] = decycleWalk(node[key], ancestors);
+        }
+        result = out;
+    }
+    ancestors.delete(node);
+    return result;
+}
 /** Resolves a JSON Pointer (e.g. `#/components/schemas/User`) against a root object. */
 function resolvePointer(root, pointer) {
     // "#" or "#/" → root

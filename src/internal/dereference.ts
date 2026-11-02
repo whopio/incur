@@ -53,6 +53,31 @@ function walk(node: unknown, root: unknown, cache: Map<string, unknown>): unknow
   return result
 }
 
+export function decycle(root: unknown): unknown {
+  return decycleWalk(root, new Set())
+}
+
+function decycleWalk(node: unknown, ancestors: Set<object>): unknown {
+  if (typeof node !== 'object' || node === null) return node
+  if (ancestors.has(node)) return { $circular: true }
+
+  ancestors.add(node)
+
+  let result: unknown
+  if (Array.isArray(node)) {
+    result = node.map((item) => decycleWalk(item, ancestors))
+  } else {
+    const out: Record<string, unknown> = {}
+    for (const key of Object.keys(node)) {
+      out[key] = decycleWalk((node as Record<string, unknown>)[key], ancestors)
+    }
+
+    result = out
+  }
+  ancestors.delete(node)
+  return result
+}
+
 /** Resolves a JSON Pointer (e.g. `#/components/schemas/User`) against a root object. */
 function resolvePointer(root: unknown, pointer: string): unknown {
   // "#" or "#/" → root

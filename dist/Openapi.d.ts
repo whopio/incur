@@ -5,6 +5,7 @@ import type * as Mcp from './Mcp.js';
 /** A minimal OpenAPI 3.x spec shape. Accepts both hand-written specs and generated ones (e.g. from `@hono/zod-openapi`). */
 export type OpenAPISpec = {
     components?: {
+        schemas?: Record<string, unknown> | undefined;
         securitySchemes?: Record<string, SecurityScheme> | undefined;
     } | undefined;
     info?: Record<string, unknown> | undefined;
@@ -62,6 +63,7 @@ type GeneratedCommand = {
         description?: string | undefined;
     } | undefined;
     options?: z.ZodObject<any> | undefined;
+    responseSchema?: Record<string, unknown> | undefined;
     run: (context: any) => any;
 };
 type GeneratedEntry = GeneratedCommand | GeneratedGroup;

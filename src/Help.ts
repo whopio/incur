@@ -426,6 +426,7 @@ function globalOptionsLines(
       ? [{ flag: `--no-${configFlag}`, desc: 'Disable JSON option defaults for this run' }]
       : []),
     { flag: '--schema', desc: 'Show JSON Schema for command' },
+    { flag: '--response-body', desc: 'Show response body schema for command' },
     { flag: '--token-count', desc: 'Print token count of output (instead of output)' },
     { flag: '--token-limit <n>', desc: 'Limit output to n tokens' },
     { flag: '--token-offset <n>', desc: 'Skip first n tokens of output' },

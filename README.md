@@ -863,6 +863,7 @@ Every incur CLI includes these flags automatically:
 | `--mcp`                  | Start as an MCP stdio server                           |
 | `--json`                 | Shorthand for `--format json`                          |
 | `--schema`               | Show JSON Schema for command's args, options, output   |
+| `--response-body`        | Show the response body schema for a command or group   |
 | `--token-count`          | Print token count of output instead of output          |
 | `--token-limit <n>`      | Limit output to n tokens (for pagination)              |
 | `--token-offset <n>`     | Skip first n tokens of output (for pagination)         |
@@ -1003,6 +1004,15 @@ Combine with `--format json` for machine-readable output:
 ```sh
 $ my-cli install --schema --format json
 ```
+
+Use `--response-body` to inspect only the response body schema. On OpenAPI-generated commands it resolves the operation's success response schema from the spec (with `$ref`s inlined); on hand-written commands it falls back to the declared `output` schema. Passed after a group, it prints a map of every subcommand's response schema:
+
+```sh
+$ my-cli api getUser --response-body      # response schema for one command
+$ my-cli api --response-body              # response schema for every command in the group
+```
+
+On raw fetch commands (no OpenAPI spec) `--response-body` is not supported; `--body` remains the curl-style request body.
 
 ### Shell completions
 

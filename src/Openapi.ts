@@ -16,6 +16,7 @@ import * as Schema from './Schema.js'
 export type OpenAPISpec = {
   components?:
     | {
+        schemas?: Record<string, unknown> | undefined
         securitySchemes?: Record<string, SecurityScheme> | undefined
       }
     | undefined
@@ -134,6 +135,7 @@ type GeneratedCommand = {
       }
     | undefined
   options?: z.ZodObject<any> | undefined
+  responseSchema?: Record<string, unknown> | undefined
   run: (context: any) => any
 }
 
@@ -456,6 +458,7 @@ export async function generateCommands(
       },
       args: argsSchema,
       options: optionsSchema,
+      responseSchema: successResponseSchema(op),
       run: createHandler({
         basePath: options.basePath,
         fetch,
@@ -471,6 +474,19 @@ export async function generateCommands(
   }
 
   return commands
+}
+
+function successResponseSchema(operation: Operation): Record<string, unknown> | undefined {
+  const responses = operation.responses as
+    | Record<string, { content?: Record<string, { schema?: unknown }> | undefined }>
+    | undefined
+  if (!responses) return undefined
+  for (const code of Object.keys(responses).sort()) {
+    if (!/^2\d\d$/.test(code)) continue
+    const schema = responses[code]?.content?.['application/json']?.schema
+    if (schema && typeof schema === 'object') return schema as Record<string, unknown>
+  }
+  return undefined
 }
 
 function mcpAnnotations(method: string) {
