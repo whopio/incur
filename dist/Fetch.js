@@ -102,7 +102,7 @@ export function parseArgv(argv) {
 /** Constructs a standard Request from a FetchInput. */
 export function buildRequest(input) {
     const url = new URL(input.path, 'http://localhost');
-    input.query.forEach((value, key) => url.searchParams.set(key, value));
+    input.query.forEach((value, key) => url.searchParams.append(key, value));
     const init = {
         method: input.method,
         headers: input.headers,

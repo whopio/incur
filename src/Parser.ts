@@ -304,7 +304,7 @@ function coerceEnv(value: string, field: z.ZodType): unknown {
   const typeName = inner.constructor.name
   if (typeName === 'ZodNumber') return Number(value)
   if (typeName === 'ZodBoolean') return value === 'true' || value === '1'
-  return value
+  return numberLiteral(value, inner) ?? value
 }
 
 /** Coerces a raw string value to the type expected by the schema. */
@@ -322,6 +322,10 @@ function coerce(value: unknown, name: string, schema: z.ZodObject<any>): unknown
   }
   if (isStructuredType(typeName) && typeof value === 'string') {
     return coerceJsonObject(value, name) ?? value
+  }
+  if (typeof value === 'string') {
+    const literal = numberLiteral(value, inner)
+    if (literal !== undefined) return literal
   }
   if (typeName === 'ZodUnion' && typeof value === 'string') {
     return coerceUnion(value, inner)
@@ -359,10 +363,37 @@ function coerceArray(values: unknown[], name: string, arraySchema: z.ZodType): u
     }
   }
 
-  if (!structured) return values
+  if (!structured)
+    return element
+      ? values.map((item) =>
+          typeof item === 'string' ? (numberLiteral(item, unwrapSchema(element)) ?? item) : item,
+        )
+      : values
   return values.map((item) =>
     typeof item === 'string' ? (coerceJsonObject(item, name) ?? item) : item,
   )
+}
+
+/**
+ * Resolves an argv string to a number literal the schema accepts, so `--duration 15`
+ * satisfies `z.literal(15)` or a `5 | 10 | 15` union such as an OpenAPI integer enum.
+ * Returns `undefined` when no number literal matches, leaving validation to the schema.
+ */
+function numberLiteral(value: string, schema: z.ZodType): number | undefined {
+  const members =
+    schema.constructor.name === 'ZodUnion'
+      ? ((schema as any).def?.options as z.ZodType[])
+      : [schema]
+  for (const member of members) {
+    const inner = unwrapSchema(member)
+    if (inner.constructor.name !== 'ZodLiteral') continue
+    const literals = (inner as any).def?.values as unknown[] | undefined
+    const match = literals?.find(
+      (literal) => typeof literal === 'number' && String(literal) === value.trim(),
+    )
+    if (match !== undefined) return match as number
+  }
+  return undefined
 }
 
 /** Parses a JSON string against a union that accepts objects, falling back to the literal string. */
