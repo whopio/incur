@@ -471,6 +471,7 @@ export function create(
         middlewares,
         outputPolicy: def.outputPolicy,
         package: def.package,
+        renderer: def.renderer,
         rootCommand: rootDef,
         rootFetch,
         sync: def.sync,
@@ -625,6 +626,11 @@ export declare namespace create {
      * @default 'all'
      */
     outputPolicy?: OutputPolicy | undefined
+    /**
+     * Renders command output in human mode, when stdout is a TTY and no `--format` or `--json` is
+     * passed. Return `null` to fall back to the default formatter.
+     */
+    renderer?: ((data: unknown) => string | null) | undefined
     /** Alternative usage patterns shown in help output. */
     usage?: Usage<args, options>[] | undefined
     /** Zod schema for middleware variables. Keys define variable names, schemas define types and defaults. */
@@ -1698,7 +1704,7 @@ async function serveImpl(
     const cta = output.meta.cta
     if (human && !fullOutput) {
       if (output.ok && output.data != null && renderOutput) {
-        const t = truncate(Formatter.format(output.data, format))
+        const t = truncate(options.renderer?.(output.data) ?? Formatter.format(output.data, format))
         writeln(t.text)
       } else if (!output.ok) writeln(formatHumanError(output.error))
       if (cta) writeln(formatHumanCta(cta))
@@ -2724,6 +2730,8 @@ declare namespace serveImpl {
     outputPolicy?: OutputPolicy | undefined
     /** Trusted npm package for generated commands. */
     package?: string | undefined
+    /** Renders command output in human mode. Return `null` to fall back to the default formatter. */
+    renderer?: ((data: unknown) => string | null) | undefined
     mcp?:
       | {
           agents?: string[] | undefined

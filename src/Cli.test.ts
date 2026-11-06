@@ -1305,6 +1305,57 @@ describe('serve', () => {
     expect(agent).toBe(false)
   })
 
+  describe('renderer', () => {
+    function create(renderer: (data: unknown) => string | null) {
+      return Cli.create('test', { renderer }).command('list', {
+        run: () => ({ items: [{ id: 1 }, { id: 2 }] }),
+      })
+    }
+
+    async function serveTty(cli: { serve: Cli.Cli['serve'] }, argv: string[]) {
+      ;(process.stdout as any).isTTY = true
+      try {
+        return await serve(cli, argv)
+      } finally {
+        ;(process.stdout as any).isTTY = false
+      }
+    }
+
+    test('renders human output with the custom renderer', async () => {
+      const renderer = vi.fn(() => 'custom table')
+      const { output } = await serveTty(create(renderer), ['list'])
+      expect(renderer).toHaveBeenCalledWith({ items: [{ id: 1 }, { id: 2 }] })
+      expect(output).toBe('custom table\n')
+    })
+
+    test('falls back to the default formatter when the renderer returns null', async () => {
+      const { output } = await serveTty(
+        create(() => null),
+        ['list'],
+      )
+      expect(output).toMatchInlineSnapshot(`
+        "items[2]{id}:
+          1
+          2
+        "
+      `)
+    })
+
+    test('skips the renderer for explicit --format', async () => {
+      const renderer = vi.fn(() => 'custom table')
+      const { output } = await serveTty(create(renderer), ['list', '--format', 'json'])
+      expect(renderer).not.toHaveBeenCalled()
+      expect(JSON.parse(output)).toEqual({ items: [{ id: 1 }, { id: 2 }] })
+    })
+
+    test('skips the renderer for agents', async () => {
+      const renderer = vi.fn(() => 'custom table')
+      const { output } = await serve(create(renderer), ['list'])
+      expect(renderer).not.toHaveBeenCalled()
+      expect(output).not.toContain('custom table')
+    })
+  })
+
   test('supports async handlers', async () => {
     const cli = Cli.create('test')
     cli.command('async', {
