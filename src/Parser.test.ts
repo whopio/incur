@@ -348,6 +348,130 @@ describe('parse', () => {
     expect(result.options).toEqual({ limit: 5 })
   })
 
+  test('object option accepts a JSON string', () => {
+    const result = Parser.parse(['--config', '{"name":"test","count":2}'], {
+      options: z.object({ config: z.object({ name: z.string(), count: z.number() }) }),
+    })
+    expect(result.options).toEqual({ config: { name: 'test', count: 2 } })
+  })
+
+  test('object option accepts a JSON string with --flag=value', () => {
+    const result = Parser.parse(['--config={"name":"test"}'], {
+      options: z.object({ config: z.object({ name: z.string() }) }),
+    })
+    expect(result.options).toEqual({ config: { name: 'test' } })
+  })
+
+  test('optional object option accepts a JSON string', () => {
+    const result = Parser.parse(['--config', '{"name":"test"}'], {
+      options: z.object({ config: z.object({ name: z.string() }).optional() }),
+    })
+    expect(result.options).toEqual({ config: { name: 'test' } })
+  })
+
+  test('nested object option accepts a JSON string', () => {
+    const result = Parser.parse(
+      ['--ad_group', '{"title":"US broad","ad_campaign":{"title":"Growth"}}'],
+      {
+        options: z.object({
+          ad_group: z
+            .object({ title: z.string(), ad_campaign: z.object({ title: z.string() }) })
+            .optional(),
+        }),
+      },
+    )
+    expect(result.options).toEqual({
+      ad_group: { title: 'US broad', ad_campaign: { title: 'Growth' } },
+    })
+  })
+
+  test('record option accepts a JSON string', () => {
+    const result = Parser.parse(['--labels', '{"env":"prod"}'], {
+      options: z.object({ labels: z.record(z.string(), z.string()) }),
+    })
+    expect(result.options).toEqual({ labels: { env: 'prod' } })
+  })
+
+  test('object option with malformed JSON throws a ParseError', () => {
+    expect(() =>
+      Parser.parse(['--config', '{"name": broken'], {
+        options: z.object({ config: z.object({ name: z.string() }) }),
+      }),
+    ).toThrow(/Invalid JSON for --config/)
+  })
+
+  test('object option with a plain string surfaces the schema type error', () => {
+    expect(() =>
+      Parser.parse(['--config', 'name=test'], {
+        options: z.object({ config: z.object({ name: z.string() }) }),
+      }),
+    ).toThrow(/expected object/)
+  })
+
+  test('array of objects accepts a single JSON array value', () => {
+    const result = Parser.parse(
+      ['--creatives', '[{"id":"file_1"},{"id":"file_2","format":"square"}]'],
+      {
+        options: z.object({
+          creatives: z.array(z.object({ id: z.string(), format: z.string().optional() })),
+        }),
+      },
+    )
+    expect(result.options).toEqual({
+      creatives: [{ id: 'file_1' }, { id: 'file_2', format: 'square' }],
+    })
+  })
+
+  test('array of objects accepts repeated JSON object values', () => {
+    const result = Parser.parse(
+      ['--creatives', '{"id":"file_1"}', '--creatives', '{"id":"file_2"}'],
+      { options: z.object({ creatives: z.array(z.object({ id: z.string() })) }) },
+    )
+    expect(result.options).toEqual({ creatives: [{ id: 'file_1' }, { id: 'file_2' }] })
+  })
+
+  test('array of objects with malformed JSON throws a ParseError', () => {
+    expect(() =>
+      Parser.parse(['--creatives', '[{"id": broken'], {
+        options: z.object({ creatives: z.array(z.object({ id: z.string() })) }),
+      }),
+    ).toThrow(/Invalid JSON for --creatives/)
+  })
+
+  test('array of strings accepts a single JSON array value', () => {
+    const result = Parser.parse(['--tags', '["a","b"]'], {
+      options: z.object({ tags: z.array(z.string()) }),
+    })
+    expect(result.options).toEqual({ tags: ['a', 'b'] })
+  })
+
+  test('array of strings keeps repeated literal values', () => {
+    const result = Parser.parse(['--tags', 'bug', '--tags', 'feature'], {
+      options: z.object({ tags: z.array(z.string()) }),
+    })
+    expect(result.options).toEqual({ tags: ['bug', 'feature'] })
+  })
+
+  test('array of strings keeps a bracket-prefixed literal that is not JSON', () => {
+    const result = Parser.parse(['--tags', '[draft'], {
+      options: z.object({ tags: z.array(z.string()) }),
+    })
+    expect(result.options).toEqual({ tags: ['[draft'] })
+  })
+
+  test('union with object member parses JSON and keeps plain strings', () => {
+    const schema = {
+      options: z.object({ value: z.union([z.string(), z.object({ id: z.string() })]) }),
+    }
+    expect(Parser.parse(['--value', '{"id":"x"}'], schema).options).toEqual({
+      value: { id: 'x' },
+    })
+    expect(Parser.parse(['--value', 'plain'], schema).options).toEqual({ value: 'plain' })
+    expect(Parser.parse(['--value', '{not json'], schema).options).toEqual({
+      value: '{not json',
+    })
+  })
+
   test('applies config defaults when argv omits an option', () => {
     const result = Parser.parse([], {
       defaults: { limit: 10 },
