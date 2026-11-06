@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import type { AgentType } from 'add-mcp'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -9,7 +9,11 @@ const exactVersionPattern =
   /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/
 const safePackageNamePattern = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/
 
-/** Registers the CLI as an MCP server via `npx add-mcp` and direct config writes for unsupported agents. */
+/**
+ * Registers the CLI as an MCP server. Agent configs are written in-process through add-mcp's
+ * library, so registration works without Node or a package runner (e.g. from a standalone binary).
+ * Amp is written directly since add-mcp does not support it.
+ */
 export async function register(
   name: string,
   options: register.Options = {},
@@ -18,34 +22,25 @@ export async function register(
   const command =
     options.command ??
     defaultCommand(options.cli ?? name, runner, options.package, options.version)
-  const targetAgents = options.agents ?? []
-  const ampOnly = targetAgents.length === 1 && targetAgents[0] === 'amp'
+  const targetAgents = (options.agents ?? []).map((agent) => agent.toLowerCase())
+  const requested = targetAgents.filter((agent) => agent !== 'amp')
 
   const agents: string[] = []
+  const failures: string[] = []
 
-  // Run add-mcp for agents it supports (skip if only targeting Amp)
-  if (!ampOnly) {
-    const args = [command, '--name', name, '-y']
-    if (options.global !== false) args.push('-g')
-    for (const agent of targetAgents.filter((a) => a !== 'amp')) args.push('-a', agent)
-
-    const [cmd, ...prefix] = runner.split(' ')
-    const { stdout } = await exec(cmd!, [...prefix, 'add-mcp', ...args])
-
-    // Extract agent names from add-mcp output (lines like "│ ✓ Claude Code: ~/.claude.json │")
-    agents.push(
-      ...stdout
-        .split('\n')
-        .filter((l) => l.includes('✓') || l.includes('✔'))
-        .map((l) =>
-          l
-            .replace(/[│┃|]/g, '')
-            .replace(/.*[✓✔]\s*/, '')
-            .replace(/:.*/, '')
-            .trim(),
-        )
-        .filter(Boolean),
-    )
+  if (targetAgents.length === 0 || requested.length > 0) {
+    const addMcp = await import('add-mcp')
+    const global = options.global !== false
+    const targets = await resolveAgents(addMcp, requested, global)
+    // Like the add-mcp CLI, install globally when any target has no project-level config.
+    const local = !global && targets.every((agent) => addMcp.agents[agent].localConfigPath)
+    const [cmd, ...args] = splitCommand(command)
+    for (const agent of targets) {
+      const { displayName } = addMcp.agents[agent]
+      const result = addMcp.upsertServer(agent, name, { command: cmd!, args }, { local })
+      if (result.success) agents.push(displayName)
+      else failures.push(`${displayName} (${result.error})`)
+    }
   }
 
   // Register with Amp directly (add-mcp doesn't support it)
@@ -54,7 +49,38 @@ export async function register(
     if (registered) agents.push('Amp')
   }
 
+  if (failures.length > 0) {
+    const registered = agents.length > 0 ? ` Registered with ${agents.join(', ')}.` : ''
+    throw new Error(`Failed to register ${name} with ${failures.join(', ')}.${registered}`)
+  }
+
   return { command, agents }
+}
+
+/**
+ * @internal Resolves target agents the way the add-mcp CLI does with `-y`: explicit names
+ * case-insensitively, otherwise detected agents, otherwise every agent that supports the install
+ * scope.
+ */
+async function resolveAgents(
+  addMcp: typeof import('add-mcp'),
+  names: string[],
+  global: boolean,
+): Promise<AgentType[]> {
+  const all = addMcp.getAgentTypes()
+  if (names.length > 0) {
+    const known = new Set<string>(all)
+    const invalid = names.filter((name) => !known.has(name))
+    if (invalid.length > 0)
+      throw new Error(
+        `Invalid agents: ${invalid.join(', ')}. Valid agents: ${['amp', ...all].join(', ')}`,
+      )
+    return [...new Set(names as AgentType[])]
+  }
+
+  const detected = global ? await addMcp.detectGlobalAgents() : addMcp.detectProjectAgents()
+  if (detected.length > 0) return detected
+  return global ? all : all.filter((agent) => addMcp.agents[agent].localConfigPath)
 }
 
 /** @internal Registers an MCP server in Amp's settings.json. */
@@ -87,7 +113,7 @@ function registerAmp(name: string, command: string): boolean {
 export declare namespace register {
   /** Options for registering an MCP server. */
   type Options = {
-    /** Target specific agents (e.g. `'claude-code'`, `'cursor'`). */
+    /** Target specific agents (e.g. `'claude-code'`, `'cursor'`). Accepts add-mcp agent names case-insensitively, plus `'amp'`. */
     agents?: string[] | undefined
     /** CLI name used to derive the default command. Defaults to the MCP server name. */
     cli?: string | undefined
@@ -197,16 +223,4 @@ function splitCommand(input: string): string[] {
   }
   if (current) tokens.push(current)
   return tokens
-}
-
-/** Promisified execFile with stderr in error message. */
-function exec(cmd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    execFile(cmd, args, (error, stdout, stderr) => {
-      if (error) {
-        const msg = stderr?.trim() || stdout?.trim() || error.message
-        reject(new Error(msg))
-      } else resolve({ stdout, stderr })
-    })
-  })
 }

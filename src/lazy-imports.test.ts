@@ -55,7 +55,10 @@ cli.command('ping', {
 await cli.serve(process.argv.slice(2))
 
 const heavy = loaded.filter(
-  (url) => url.includes('@modelcontextprotocol') || url.includes('node_modules/yaml'),
+  (url) =>
+    url.includes('@modelcontextprotocol') ||
+    url.includes('node_modules/yaml') ||
+    url.includes('node_modules/add-mcp'),
 )
 console.log(JSON.stringify({ heavy }))
 `,
@@ -71,7 +74,7 @@ console.log(JSON.stringify({ heavy }))
     return (JSON.parse(line) as { heavy: string[] }).heavy
   }
 
-  test('plain command run does not load yaml or the MCP SDK', async () => {
+  test('plain command run does not load yaml, the MCP SDK or add-mcp', async () => {
     const { stdout } = await exec(process.execPath, ['--import', 'tsx', src, 'ping'])
     expect(stdout).toContain('pong: true')
     expect(parseHeavy(stdout)).toEqual([])
