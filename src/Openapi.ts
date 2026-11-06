@@ -231,7 +231,7 @@ function addCommand(
       ...(command.description ? { summary: command.description } : undefined),
       ...(parameters.length ? { parameters } : undefined),
       ...requestBody(method, optionsSchema),
-      responses: responses(outputSchema),
+      responses: responses(outputSchema) as OperationObject['responses'],
     }
 
     const item = (paths[variant.path] ?? {}) as PathItemObject
