@@ -199,6 +199,20 @@ describe('buildRequest', () => {
     expect(url.searchParams.get('limit')).toBe('5')
   })
 
+  test('builds request with repeated query params', () => {
+    const req = Fetch.buildRequest({
+      path: '/users',
+      method: 'GET',
+      headers: new Headers(),
+      body: undefined,
+      query: new URLSearchParams([
+        ['ids[]', 'a'],
+        ['ids[]', 'b'],
+      ]),
+    })
+    expect(new URL(req.url).searchParams.getAll('ids[]')).toEqual(['a', 'b'])
+  })
+
   test('builds POST request with body', () => {
     const req = Fetch.buildRequest(Fetch.parseArgv(['users', '-X', 'POST', '-d', '{"name":"Bob"}']))
     expect(req.method).toBe('POST')
