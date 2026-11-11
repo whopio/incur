@@ -15,6 +15,7 @@ declare const __INCUR_BINARY_VERSION__: unknown
 const githubApi = 'https://api.github.com'
 const requestTimeout = 10_000
 const downloadTimeout = 120_000
+const staleArtifactAge = 10 * 60 * 1_000
 const handoffTimeout = 60_000
 const gunzip = util.promisify(zlib.gunzip)
 
@@ -86,8 +87,7 @@ export declare namespace github {
  */
 export async function handleArgv(argv: string[] = process.argv.slice(2)): Promise<boolean> {
   if (argv[0] !== applyFlag) {
-    if (process.platform === 'win32' && name && target && version)
-      await cleanupArtifacts(process.execPath)
+    if (name && target && version) await cleanupArtifacts(process.execPath)
     return false
   }
   if (process.platform !== 'win32') throw new Error(`${applyFlag} is only supported on Windows.`)
@@ -446,21 +446,28 @@ function delay(duration: number): Promise<void> {
 /** Removes unlocked handoff copies on the next normal compiled-binary startup. */
 async function cleanupArtifacts(executable: string): Promise<void> {
   const directory = path.dirname(executable)
-  const prefix = `${path.basename(executable)}.incur-handoff-`
+  const base = path.basename(executable)
+  const id = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+  const handoff = new RegExp(`^${escapeRegExp(base)}\\.incur-handoff-${id}\\.exe$`, 'i')
+  const staged = new RegExp(`^${escapeRegExp(base)}\\.incur-new-${id}(?:\\.exe)?$`, 'i')
+  const staleBefore = Date.now() - staleArtifactAge
   try {
     const entries = await fs.promises.readdir(directory)
     await Promise.all(
-      entries
-        .filter(
-          (entry) =>
-            entry.startsWith(prefix) &&
-            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.exe$/i.test(
-              entry.slice(prefix.length),
-            ),
-        )
-        .map((entry) => remove(path.join(directory, entry))),
+      entries.map(async (entry) => {
+        const file = path.join(directory, entry)
+        if (process.platform === 'win32' && handoff.test(entry)) return remove(file)
+        // A candidate left by an update that was killed before it renamed or removed it. Only
+        // old ones, so a concurrent update's candidate is never deleted while it is validated.
+        if (staged.test(entry) && (await fs.promises.stat(file)).mtimeMs < staleBefore)
+          return remove(file)
+      }),
     )
   } catch {}
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 /** Preserves an actionable detached-handoff failure beside the executable. */

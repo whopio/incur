@@ -103,6 +103,23 @@ export async function install(name: string, options: Options = {}): Promise<inst
   const provider = resolveProvider(name, options)
   if (!provider?.install) throw new Error(`No update installer is configured for '${name}'.`)
 
+  if (provider.check && provider.current) {
+    let latest: string | undefined
+    let checked = true
+    try {
+      latest = await provider.check({
+        current: provider.current,
+        name,
+        ...(provider.package ? { package: provider.package } : undefined),
+      })
+    } catch {
+      // An unreachable registry should not block an explicit install.
+      checked = false
+    }
+    if (checked && (!latest || !isNewerVersion(latest, provider.current)))
+      return { current: provider.current, name: provider.name, upToDate: true }
+  }
+
   const cached = readCache(cachePath(provider.key))
   await provider.install({
     ...(provider.current ? { current: provider.current } : undefined),
@@ -122,10 +139,14 @@ export declare namespace install {
   type Result = {
     /** Package-manager-specific command that was run. */
     command?: string | undefined
+    /** Version that was already installed when no newer release exists. */
+    current?: string | undefined
     /** Whether installation finishes after the updating process exits. */
     deferred?: boolean | undefined
     /** Package or CLI name displayed to the user. */
     name: string
+    /** Whether the installed version is already the newest release. */
+    upToDate?: true | undefined
   }
 }
 

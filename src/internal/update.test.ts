@@ -199,6 +199,29 @@ test('installs through a custom standalone provider', async () => {
   })
 })
 
+test('reports an up-to-date install without running the installer', async () => {
+  process.argv[1] = path.join(directory, 'standalone')
+  const installer = vi.fn()
+
+  for (const latest of [undefined, '1.0.0', '0.9.0'])
+    await expect(
+      install('frog', { check: () => latest, install: installer, version: '1.0.0' }),
+    ).resolves.toEqual({ current: '1.0.0', name: 'frog', upToDate: true })
+  expect(installer).not.toHaveBeenCalled()
+
+  await expect(
+    install('frog', { check: () => '1.1.0', install: installer, version: '1.0.0' }),
+  ).resolves.toEqual({ name: 'frog' })
+  await expect(
+    install('frog', {
+      check: () => Promise.reject(new Error('offline')),
+      install: installer,
+      version: '1.0.0',
+    }),
+  ).resolves.toEqual({ name: 'frog' })
+  expect(installer).toHaveBeenCalledTimes(2)
+})
+
 test('reports deferred custom installations', async () => {
   process.argv[1] = path.join(directory, 'standalone')
 

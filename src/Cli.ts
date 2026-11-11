@@ -957,7 +957,8 @@ async function serveImpl(
   if (update && !help) {
     try {
       const result = await Update.install(name, updateOptions)
-      if (human) {
+      if (human && result.upToDate) writeln(`✓ ${result.name} is up to date (${result.current})`)
+      else if (human) {
         const lines = [
           result.deferred ? `✓ Update staged for ${result.name}` : `✓ Updated ${result.name}`,
         ]

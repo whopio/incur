@@ -116,6 +116,10 @@ export async function build(options: build.Options): Promise<build.Result> {
         '--compile',
         `--target=${definition.bun}`,
         `--outfile=${executable}`,
+        // The executable runs in arbitrary project folders; a .env or bunfig.toml there must not
+        // set its environment or preload code into it.
+        '--no-compile-autoload-dotenv',
+        '--no-compile-autoload-bunfig',
         '--define',
         `__INCUR_BINARY_NAME__=${JSON.stringify(name)}`,
         '--define',

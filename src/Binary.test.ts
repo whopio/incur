@@ -399,6 +399,28 @@ test('normal compiled startup removes only unlocked helpers', async () => {
   await expect(fs.promises.readFile(lookalike, 'utf8')).resolves.toBe('unrelated')
 })
 
+test('normal compiled startup removes candidates left by an interrupted update', async () => {
+  const Binary = await load(binary)
+  const directory = await temporaryDirectory()
+  const executable = path.join(directory, 'frog')
+  const stale = `${executable}.incur-new-${crypto.randomUUID()}`
+  const fresh = `${executable}.incur-new-${crypto.randomUUID()}`
+  const lookalike = `${executable}.incur-new-not-managed`
+  await fs.promises.writeFile(executable, 'old')
+  for (const file of [stale, fresh, lookalike]) await fs.promises.writeFile(file, 'candidate')
+  const hourAgo = new Date(Date.now() - 60 * 60 * 1_000)
+  await fs.promises.utimes(stale, hourAgo, hourAgo)
+  await fs.promises.utimes(lookalike, hourAgo, hourAgo)
+  process.execPath = executable
+  setPlatform('darwin')
+
+  await expect(Binary.handleArgv([])).resolves.toBe(false)
+
+  await expect(fs.promises.stat(stale)).rejects.toMatchObject({ code: 'ENOENT' })
+  await expect(fs.promises.readFile(fresh, 'utf8')).resolves.toBe('candidate')
+  await expect(fs.promises.readFile(lookalike, 'utf8')).resolves.toBe('candidate')
+})
+
 type Metadata = {
   name: string
   target: string

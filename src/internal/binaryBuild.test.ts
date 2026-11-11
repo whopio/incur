@@ -67,6 +67,10 @@ describe('build', () => {
       'frog-windows-arm64.exe.gz',
       'frog-windows-x64-baseline.exe.gz',
     ])
+    for (const { args } of calls.slice(1)) {
+      expect(args).toContain('--no-compile-autoload-dotenv')
+      expect(args).toContain('--no-compile-autoload-bunfig')
+    }
     expect(calls.slice(1).map(({ args, target }) => ({ target, targetFlag: args[3] })))
       .toMatchInlineSnapshot(`
         [
