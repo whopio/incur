@@ -102,9 +102,15 @@ describe('generate', () => {
     expect(() => generate({ ...options, repository: 'wevm/frog/other' })).toThrow(
       "Invalid GitHub repository 'wevm/frog/other'",
     )
+    expect(() => generate({ ...options, version: '1.2' })).toThrow('Invalid version')
+    expect(() => generate({ ...options, version: '1.2.3+build.1' })).toThrow('Invalid version')
     expect(() => generate({ ...options, version: '1.2.3-beta.1' })).toThrow(
-      'Invalid stable version',
+      "Release tag 'v1.2.3' does not identify version 1.2.3-beta.1.",
     )
+    const prerelease = generate({ ...options, tag: 'v1.2.3-beta.1', version: '1.2.3-beta.1' })
+    expect(prerelease.shell).toContain("version='1.2.3-beta.1'")
+    expect(prerelease.shell).toContain("tag='v1.2.3-beta.1'")
+    expect(prerelease.powershell).toContain("$version = '1.2.3-beta.1'")
     expect(() => generate({ ...options, tag: 'v1.2.4' })).toThrow(
       "Release tag 'v1.2.4' does not identify version 1.2.3.",
     )

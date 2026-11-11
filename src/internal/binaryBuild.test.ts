@@ -483,9 +483,9 @@ describe('build', () => {
         installer: true,
         name: 'frog',
         repository: 'wevm/frog',
-        version: '1.0.0-beta.1',
+        version: '1.0.0+build.1',
       }),
-    ).rejects.toThrow('Invalid stable version')
+    ).rejects.toThrow('Invalid version')
     expect(execute).not.toHaveBeenCalled()
   })
 

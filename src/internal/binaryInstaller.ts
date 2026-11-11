@@ -89,9 +89,9 @@ function normalize(options: generate.Options): Release {
   if (isWindowsReserved(name)) throw new Error(`Invalid cross-platform CLI name: ${options.name}`)
   if (!isRepository(repository))
     throw new Error(`Invalid GitHub repository '${options.repository}'. Expected 'owner/name'.`)
-  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version))
-    throw new Error(`Invalid stable version: ${options.version}`)
-  if (stableVersion(tag) !== version)
+  if (!new RegExp(`^${versionPattern}$`).test(version))
+    throw new Error(`Invalid version: ${options.version}`)
+  if (tagVersion(tag) !== version)
     throw new Error(`Release tag '${options.tag}' does not identify version ${version}.`)
 
   const installVariable = `${name.toUpperCase().replaceAll(/[^A-Z0-9]/g, '_')}_INSTALL_DIR`
@@ -104,12 +104,16 @@ function normalize(options: generate.Options): Release {
   }
 }
 
-function stableVersion(tag: string): string | undefined {
-  const match = tag.match(
-    /^(?:[vV]?|(?:@[A-Za-z0-9][A-Za-z0-9._~-]*\/)?[A-Za-z0-9][A-Za-z0-9._~-]*@)(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/,
-  )
-  if (!match) return undefined
-  return `${match[1]}.${match[2]}.${match[3]}`
+/** A semantic version without build metadata. A prerelease version installs only from its exact tag. */
+const versionPattern =
+  '(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?'
+
+function tagVersion(tag: string): string | undefined {
+  return tag.match(
+    new RegExp(
+      `^(?:[vV]?|(?:@[A-Za-z0-9][A-Za-z0-9._~-]*\\/)?[A-Za-z0-9][A-Za-z0-9._~-]*@)(${versionPattern})$`,
+    ),
+  )?.[1]
 }
 
 function isRepository(repository: string): boolean {
